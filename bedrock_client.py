@@ -108,7 +108,13 @@ def invoke_model(
                 "temperature": temperature,
             },
         )
-        return response["output"]["message"]["content"][0]["text"]
+        # Some models (e.g. MiniMax M2.5) prepend a reasoningContent block
+        # before the actual text block — find the first text block.
+        contents = response["output"]["message"]["content"]
+        for block in contents:
+            if "text" in block:
+                return block["text"]
+        raise RuntimeError("No text block found in Bedrock response content")
     except ClientError as e:
         error_code = e.response["Error"]["Code"]
         error_msg = e.response["Error"]["Message"]
