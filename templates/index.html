@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PII-Safe LLM Chat</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px;
+    }
+
+    header {
+      width: 100%;
+      max-width: 900px;
+      margin-bottom: 24px;
+    }
+
+    header h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #16213e;
+    }
+
+    header p {
+      font-size: 0.9rem;
+      color: #555;
+      margin-top: 4px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      padding: 24px;
+      width: 100%;
+      max-width: 900px;
+      margin-bottom: 20px;
+    }
+
+    .card h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: #16213e;
+    }
+
+    textarea {
+      width: 100%;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 0.95rem;
+      resize: vertical;
+      min-height: 100px;
+      outline: none;
+      transition: border-color 0.2s;
+      font-family: inherit;
+    }
+
+    textarea:focus { border-color: #4f46e5; }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    select {
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.9rem;
+      outline: none;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    button#sendBtn {
+      background: #4f46e5;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 28px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+    }
+
+    button#sendBtn:hover { background: #4338ca; }
+    button#sendBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .spinner {
+      display: none;
+      width: 20px;
+      height: 20px;
+      border: 3px solid #e0e0e0;
+      border-top-color: #4f46e5;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .result-section { display: none; }
+
+    .pii-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+
+    .pii-table th, .pii-table td {
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .pii-table th {
+      background: #f8f9fa;
+      font-weight: 600;
+      color: #555;
+    }
+
+    .pii-table tr:last-child td { border-bottom: none; }
+
+    .badge {
+      display: inline-block;
+      background: #ede9fe;
+      color: #5b21b6;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      font-family: monospace;
+    }
+
+    .text-box {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 0.92rem;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      border: 1px solid #e5e7eb;
+    }
+
+    .text-box.highlight { border-color: #a5b4fc; background: #eef2ff; }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 640px) { .two-col { grid-template-columns: 1fr; } }
+
+    .label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #6b7280;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .error-box {
+      background: #fef2f2;
+      border: 1px solid #fca5a5;
+      border-radius: 8px;
+      padding: 14px;
+      color: #b91c1c;
+      font-size: 0.9rem;
+      display: none;
+    }
+
+    .no-pii {
+      color: #9ca3af;
+      font-size: 0.88rem;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🔒 PII-Safe LLM Chat</h1>
+  <p>输入内容中的个人隐私信息（PII）将在发送给大模型前自动脱敏，收到回复后自动还原。</p>
+</header>
+
+<!-- Input card -->
+<div class="card">
+  <h2>💬 输入消息</h2>
+  <textarea id="userInput" placeholder="请输入您的问题，例如：我叫张三，手机号 13812345678，请帮我写一封邮件…"></textarea>
+
+  <div class="controls">
+    <select id="langSelect">
+      <option value="zh">中文</option>
+      <option value="en">English</option>
+    </select>
+    <select id="modelSelect">
+      <option value="">加载模型列表…</option>
+    </select>
+    <button id="sendBtn" onclick="sendMessage()">发送</button>
+    <div class="spinner" id="spinner"></div>
+  </div>
+
+  <div class="error-box" id="errorBox"></div>
+</div>
+
+<!-- PII detected -->
+<div class="card result-section" id="piiCard">
+  <h2>🔍 检测到的 PII</h2>
+  <div id="piiContent"></div>
+</div>
+
+<!-- Prompt comparison -->
+<div class="card result-section" id="promptCard">
+  <h2>📤 发送给大模型的内容（脱敏后）</h2>
+  <div class="text-box highlight" id="anonymizedText"></div>
+</div>
+
+<!-- Response comparison -->
+<div class="card result-section" id="responseCard">
+  <h2>📥 大模型回复</h2>
+  <div class="two-col">
+    <div>
+      <div class="label">原始回复（含占位符）</div>
+      <div class="text-box" id="rawResponse"></div>
+    </div>
+    <div>
+      <div class="label">还原后回复</div>
+      <div class="text-box highlight" id="restoredResponse"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  async function sendMessage() {
+    const message = document.getElementById("userInput").value.trim();
+    if (!message) return;
+
+    const language = document.getElementById("langSelect").value;
+    const modelKey = document.getElementById("modelSelect").value;
+    const btn = document.getElementById("sendBtn");
+    const spinner = document.getElementById("spinner");
+    const errorBox = document.getElementById("errorBox");
+
+    // Reset UI
+    errorBox.style.display = "none";
+    document.querySelectorAll(".result-section").forEach(el => el.style.display = "none");
+    btn.disabled = true;
+    spinner.style.display = "block";
+
+    try {
+      const resp = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, language, model_key: modelKey }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.detail || `HTTP ${resp.status}`);
+      }
+
+      const data = await resp.json();
+      renderResults(data);
+    } catch (e) {
+      errorBox.textContent = "❌ 错误：" + e.message;
+      errorBox.style.display = "block";
+    } finally {
+      btn.disabled = false;
+      spinner.style.display = "none";
+    }
+  }
+
+  function renderResults(data) {
+    // PII table
+    const piiCard = document.getElementById("piiCard");
+    const piiContent = document.getElementById("piiContent");
+
+    if (data.pii_detected.length === 0) {
+      piiContent.innerHTML = '<p class="no-pii">未检测到 PII 信息</p>';
+    } else {
+      let rows = data.pii_detected.map(item => `
+        <tr>
+          <td><span class="badge">${escHtml(item.placeholder)}</span></td>
+          <td>${escHtml(item.original)}</td>
+        </tr>
+      `).join("");
+      piiContent.innerHTML = `
+        <table class="pii-table">
+          <thead><tr><th>占位符</th><th>原始值</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+    piiCard.style.display = "block";
+
+    // Anonymized prompt
+    document.getElementById("anonymizedText").textContent = data.anonymized_message;
+    document.getElementById("promptCard").style.display = "block";
+
+    // Responses
+    document.getElementById("rawResponse").textContent = data.llm_response;
+    document.getElementById("restoredResponse").textContent = data.restored_response;
+    document.getElementById("responseCard").style.display = "block";
+  }
+
+  function escHtml(str) {
+    return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  // Allow Ctrl+Enter to submit
+  document.getElementById("userInput").addEventListener("keydown", e => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) sendMessage();
+  });
+
+  // Load model list on page load
+  (async () => {
+    try {
+      const res = await fetch("/models");
+      const models = await res.json();
+      const sel = document.getElementById("modelSelect");
+      sel.innerHTML = models.map(m =>
+        `<option value="${m.key}">${m.display_name}</option>`
+      ).join("");
+    } catch (e) {
+      console.error("Failed to load models", e);
+    }
+  })();
+</script>
+
+</body>
+</html>
