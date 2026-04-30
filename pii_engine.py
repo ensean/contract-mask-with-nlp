@@ -84,14 +84,8 @@ PATTERNS: dict[str, re.Pattern] = {
         r"(?:支行|分行|分公司|营业部|营业所|总行)?"
     ),
 
-    # 公司/组织名称正则兜底（spaCy ORG 会补充识别）
-    "CN_COMPANY": re.compile(
-        r"[\u4e00-\u9fa5A-Za-z0-9（）()]{2,30}"
-        r"(?:集团|控股|股份|有限|责任|合伙|联合|实业|投资|科技|"
-        r"贸易|建设|工程|咨询|服务|管理|发展|文化|传媒|网络|"
-        r"信息|技术|电子|医疗|教育|金融|保险|证券)"
-        r"(?:有限)?(?:公司|企业|机构|基金|中心|协会|委员会)?"
-    ),
+    # CN_COMPANY 不用正则，完全依赖 spaCy ORG NER + 后处理过滤
+    # （正则误判率极高，已移除）
 }
 
 
@@ -225,17 +219,58 @@ class PIIEngine:
         return spans + org_spans
 
     def _spacy_org_spans(self, text: str, language: str) -> list[PIISpan]:
-        """Extract ORG entities via spaCy NER as CN_COMPANY."""
+        """
+        Extract company/organization names via spaCy NER.
+
+        Two problems with zh_core_web_sm we work around:
+        1. "北京星辰科技有限公司" is split into GPE("北京") + ORG("科技有限公司"),
+           with non-entity text "星辰" in between.
+           We look ahead up to 10 chars after a GPE to find an adjacent ORG and
+           merge the whole span (GPE text + gap + ORG text) into one CN_COMPANY.
+        2. Generic ORG entities like "仲裁委员会" or "人民法院" are NOT company
+           principals — we filter by requiring at least one company-suffix keyword.
+        """
+        COMPANY_SUFFIXES = frozenset([
+            "公司", "企业", "集团", "控股", "股份", "有限", "合伙",
+            "事务所", "基金", "银行", "保险", "证券", "投资", "实业",
+            "科技", "传媒", "文化", "网络", "信息", "技术", "工程",
+            "建设", "贸易", "咨询", "服务", "发展", "电子", "医疗",
+            "教育", "金融", "商贸", "物流", "能源", "地产", "置业",
+        ])
+        # Max gap (chars) between a GPE and a following ORG to merge them
+        MAX_MERGE_GAP = 10
+
         try:
             import spacy
             model = "zh_core_web_sm" if language == "zh" else "en_core_web_sm"
             nlp = spacy.load(model)
             doc = nlp(text)
-            spans = []
-            for ent in doc.ents:
-                if ent.label_ in ("ORG", "COMPANY", "GPE"):
-                    # Only tag ORG/COMPANY as CN_COMPANY; skip pure location GPE
-                    if ent.label_ in ("ORG", "COMPANY"):
+            ents = list(doc.ents)
+            spans: list[PIISpan] = []
+            skip_next = False
+            for i, ent in enumerate(ents):
+                if skip_next:
+                    skip_next = False
+                    continue
+
+                # Try to merge GPE + (gap ≤ MAX_MERGE_GAP chars) + ORG
+                if ent.label_ == "GPE" and i + 1 < len(ents):
+                    next_ent = ents[i + 1]
+                    gap = next_ent.start_char - ent.end_char
+                    if next_ent.label_ in ("ORG", "COMPANY") and 0 <= gap <= MAX_MERGE_GAP:
+                        merged_text = text[ent.start_char: next_ent.end_char]
+                        if any(kw in merged_text for kw in COMPANY_SUFFIXES):
+                            spans.append(PIISpan(
+                                start=ent.start_char,
+                                end=next_ent.end_char,
+                                pii_type="CN_COMPANY",
+                                original=merged_text,
+                            ))
+                            skip_next = True
+                            continue
+
+                if ent.label_ in ("ORG", "COMPANY"):
+                    if any(kw in ent.text for kw in COMPANY_SUFFIXES):
                         spans.append(PIISpan(
                             start=ent.start_char, end=ent.end_char,
                             pii_type="CN_COMPANY",
