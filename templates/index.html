@@ -21,21 +21,40 @@
     header {
       width: 100%;
       max-width: 900px;
-      margin-bottom: 24px;
+      margin-bottom: 16px;
     }
 
-    header h1 {
-      font-size: 1.6rem;
-      font-weight: 700;
-      color: #16213e;
+    header h1 { font-size: 1.6rem; font-weight: 700; color: #16213e; }
+    header p  { font-size: 0.9rem; color: #555; margin-top: 4px; }
+
+    /* ---- Tabs ---- */
+    .tabs {
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      gap: 4px;
+      margin-bottom: 20px;
     }
 
-    header p {
-      font-size: 0.9rem;
-      color: #555;
-      margin-top: 4px;
+    .tab-btn {
+      padding: 10px 24px;
+      border: none;
+      border-radius: 8px 8px 0 0;
+      background: #e2e8f0;
+      color: #475569;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
     }
 
+    .tab-btn.active { background: #fff; color: #4f46e5; box-shadow: 0 -2px 0 #4f46e5 inset; }
+    .tab-btn:hover:not(.active) { background: #cbd5e1; }
+
+    .tab-panel { display: none; width: 100%; }
+    .tab-panel.active { display: block; }
+
+    /* ---- Cards ---- */
     .card {
       background: #fff;
       border-radius: 12px;
@@ -46,12 +65,7 @@
       margin-bottom: 20px;
     }
 
-    .card h2 {
-      font-size: 1rem;
-      font-weight: 600;
-      margin-bottom: 12px;
-      color: #16213e;
-    }
+    .card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: #16213e; }
 
     textarea {
       width: 100%;
@@ -65,7 +79,6 @@
       transition: border-color 0.2s;
       font-family: inherit;
     }
-
     textarea:focus { border-color: #4f46e5; }
 
     .controls {
@@ -76,191 +89,294 @@
       flex-wrap: wrap;
     }
 
-    select {
+    select, input[type="text"] {
       border: 1px solid #d1d5db;
       border-radius: 8px;
       padding: 8px 12px;
       font-size: 0.9rem;
       outline: none;
       background: #fff;
-      cursor: pointer;
     }
 
-    button#sendBtn {
-      background: #4f46e5;
-      color: #fff;
+    input[type="text"] { flex: 1; min-width: 200px; }
+
+    .btn {
       border: none;
       border-radius: 8px;
-      padding: 10px 28px;
+      padding: 10px 24px;
       font-size: 0.95rem;
       font-weight: 600;
       cursor: pointer;
       transition: background 0.2s, opacity 0.2s;
+      color: #fff;
     }
-
-    button#sendBtn:hover { background: #4338ca; }
-    button#sendBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: #4f46e5; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-success { background: #059669; }
+    .btn-success:hover { background: #047857; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .spinner {
       display: none;
-      width: 20px;
-      height: 20px;
+      width: 20px; height: 20px;
       border: 3px solid #e0e0e0;
       border-top-color: #4f46e5;
       border-radius: 50%;
       animation: spin 0.7s linear infinite;
     }
-
     @keyframes spin { to { transform: rotate(360deg); } }
 
     .result-section { display: none; }
 
-    .pii-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.88rem;
-    }
-
+    .pii-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
     .pii-table th, .pii-table td {
-      text-align: left;
-      padding: 8px 12px;
+      text-align: left; padding: 8px 12px;
       border-bottom: 1px solid #f0f0f0;
     }
-
-    .pii-table th {
-      background: #f8f9fa;
-      font-weight: 600;
-      color: #555;
-    }
-
+    .pii-table th { background: #f8f9fa; font-weight: 600; color: #555; }
     .pii-table tr:last-child td { border-bottom: none; }
 
     .badge {
       display: inline-block;
-      background: #ede9fe;
-      color: #5b21b6;
-      border-radius: 4px;
-      padding: 2px 8px;
-      font-size: 0.8rem;
-      font-weight: 600;
-      font-family: monospace;
+      background: #ede9fe; color: #5b21b6;
+      border-radius: 4px; padding: 2px 8px;
+      font-size: 0.8rem; font-weight: 600; font-family: monospace;
     }
 
     .text-box {
       background: #f8f9fa;
-      border-radius: 8px;
-      padding: 14px;
-      font-size: 0.92rem;
-      line-height: 1.6;
-      white-space: pre-wrap;
-      word-break: break-word;
+      border-radius: 8px; padding: 14px;
+      font-size: 0.92rem; line-height: 1.6;
+      white-space: pre-wrap; word-break: break-word;
       border: 1px solid #e5e7eb;
     }
-
     .text-box.highlight { border-color: #a5b4fc; background: #eef2ff; }
 
-    .two-col {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }
-
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     @media (max-width: 640px) { .two-col { grid-template-columns: 1fr; } }
 
     .label {
-      font-size: 0.8rem;
-      font-weight: 600;
-      color: #6b7280;
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
+      font-size: 0.8rem; font-weight: 600; color: #6b7280;
+      margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;
     }
 
     .error-box {
-      background: #fef2f2;
-      border: 1px solid #fca5a5;
-      border-radius: 8px;
-      padding: 14px;
-      color: #b91c1c;
-      font-size: 0.9rem;
-      display: none;
+      background: #fef2f2; border: 1px solid #fca5a5;
+      border-radius: 8px; padding: 14px;
+      color: #b91c1c; font-size: 0.9rem; display: none;
+      margin-top: 12px;
     }
 
-    .no-pii {
-      color: #9ca3af;
-      font-size: 0.88rem;
-      font-style: italic;
+    .success-box {
+      background: #f0fdf4; border: 1px solid #86efac;
+      border-radius: 8px; padding: 14px;
+      color: #166534; font-size: 0.9rem; display: none;
+      margin-top: 12px;
     }
+
+    .no-pii { color: #9ca3af; font-size: 0.88rem; font-style: italic; }
+
+    /* ---- File upload area ---- */
+    .upload-area {
+      border: 2px dashed #d1d5db;
+      border-radius: 10px;
+      padding: 32px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+    }
+    .upload-area:hover, .upload-area.dragover {
+      border-color: #4f46e5; background: #eef2ff;
+    }
+    .upload-area input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    }
+    .upload-area .upload-icon { font-size: 2rem; margin-bottom: 8px; }
+    .upload-area p { color: #6b7280; font-size: 0.9rem; }
+    .upload-area .file-name {
+      margin-top: 8px; font-weight: 600; color: #4f46e5; font-size: 0.9rem;
+    }
+
+    .session-id-box {
+      background: #f8f9fa; border: 1px solid #e5e7eb;
+      border-radius: 8px; padding: 12px 16px;
+      font-family: monospace; font-size: 0.88rem;
+      word-break: break-all; margin-top: 12px;
+    }
+
+    .copy-btn {
+      background: none; border: 1px solid #d1d5db;
+      border-radius: 6px; padding: 4px 10px;
+      font-size: 0.8rem; cursor: pointer; color: #555;
+      margin-left: 8px; vertical-align: middle;
+    }
+    .copy-btn:hover { background: #f0f0f0; }
   </style>
 </head>
 <body>
 
 <header>
   <h1>🔒 PII-Safe LLM Chat</h1>
-  <p>输入内容中的个人隐私信息（PII）将在发送给大模型前自动脱敏，收到回复后自动还原。</p>
+  <p>个人隐私信息（PII）在发送给大模型前自动脱敏，收到回复后自动还原。支持文本对话和 Word 文档处理。</p>
 </header>
 
-<!-- Input card -->
-<div class="card">
-  <h2>💬 输入消息</h2>
-  <textarea id="userInput" placeholder="请输入您的问题，例如：我叫张三，手机号 13812345678，请帮我写一封邮件…"></textarea>
+<!-- Tab navigation -->
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('chat', this)">💬 文本对话</button>
+  <button class="tab-btn" onclick="switchTab('docx-anon', this)">📄 Word 脱敏</button>
+  <button class="tab-btn" onclick="switchTab('docx-restore', this)">🔓 Word 还原</button>
+</div>
 
-  <div class="controls">
-    <select id="langSelect">
-      <option value="zh">中文</option>
-      <option value="en">English</option>
-    </select>
-    <select id="modelSelect">
-      <option value="">加载模型列表…</option>
-    </select>
-    <button id="sendBtn" onclick="sendMessage()">发送</button>
-    <div class="spinner" id="spinner"></div>
+<!-- ================================================================ -->
+<!-- TAB 1: Text chat                                                  -->
+<!-- ================================================================ -->
+<div class="tab-panel active" id="tab-chat">
+
+  <div class="card">
+    <h2>💬 输入消息</h2>
+    <textarea id="userInput" placeholder="请输入您的问题，例如：我叫张三，手机号 13812345678，请帮我写一封邮件…"></textarea>
+    <div class="controls">
+      <select id="langSelect">
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+      </select>
+      <select id="modelSelect"><option value="">加载模型列表…</option></select>
+      <button class="btn btn-primary" id="sendBtn" onclick="sendMessage()">发送</button>
+      <div class="spinner" id="chatSpinner"></div>
+    </div>
+    <div class="error-box" id="chatError"></div>
   </div>
 
-  <div class="error-box" id="errorBox"></div>
-</div>
+  <div class="card result-section" id="piiCard">
+    <h2>🔍 检测到的 PII</h2>
+    <div id="piiContent"></div>
+  </div>
 
-<!-- PII detected -->
-<div class="card result-section" id="piiCard">
-  <h2>🔍 检测到的 PII</h2>
-  <div id="piiContent"></div>
-</div>
+  <div class="card result-section" id="promptCard">
+    <h2>📤 发送给大模型的内容（脱敏后）</h2>
+    <div class="text-box highlight" id="anonymizedText"></div>
+  </div>
 
-<!-- Prompt comparison -->
-<div class="card result-section" id="promptCard">
-  <h2>📤 发送给大模型的内容（脱敏后）</h2>
-  <div class="text-box highlight" id="anonymizedText"></div>
-</div>
-
-<!-- Response comparison -->
-<div class="card result-section" id="responseCard">
-  <h2>📥 大模型回复</h2>
-  <div class="two-col">
-    <div>
-      <div class="label">原始回复（含占位符）</div>
-      <div class="text-box" id="rawResponse"></div>
-    </div>
-    <div>
-      <div class="label">还原后回复</div>
-      <div class="text-box highlight" id="restoredResponse"></div>
+  <div class="card result-section" id="responseCard">
+    <h2>📥 大模型回复</h2>
+    <div class="two-col">
+      <div>
+        <div class="label">原始回复（含占位符）</div>
+        <div class="text-box" id="rawResponse"></div>
+      </div>
+      <div>
+        <div class="label">还原后回复</div>
+        <div class="text-box highlight" id="restoredResponse"></div>
+      </div>
     </div>
   </div>
-</div>
+
+</div><!-- /tab-chat -->
+
+<!-- ================================================================ -->
+<!-- TAB 2: Word anonymize                                             -->
+<!-- ================================================================ -->
+<div class="tab-panel" id="tab-docx-anon">
+
+  <div class="card">
+    <h2>📄 上传 Word 文档进行脱敏</h2>
+
+    <div class="upload-area" id="anonUploadArea">
+      <input type="file" id="anonFile" accept=".docx" onchange="onAnonFileChange(this)" />
+      <div class="upload-icon">📂</div>
+      <p>点击或拖拽 .docx 文件到此处</p>
+      <div class="file-name" id="anonFileName"></div>
+    </div>
+
+    <div class="controls" style="margin-top:16px;">
+      <select id="anonLang">
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+      </select>
+      <button class="btn btn-primary" id="anonBtn" onclick="anonymizeDocx()">开始脱敏</button>
+      <div class="spinner" id="anonSpinner"></div>
+    </div>
+    <div class="error-box" id="anonError"></div>
+    <div class="success-box" id="anonSuccess"></div>
+  </div>
+
+  <div class="card result-section" id="anonResultCard">
+    <h2>✅ 脱敏完成</h2>
+    <p style="color:#555; font-size:0.9rem; margin-bottom:12px;">
+      请保存以下 Session ID，还原文档时需要用到。
+    </p>
+    <div class="label">Session ID</div>
+    <div class="session-id-box" id="anonSessionId">
+      —
+      <button class="copy-btn" onclick="copySessionId()">复制</button>
+    </div>
+    <div style="margin-top:8px; color:#6b7280; font-size:0.85rem;" id="anonPiiCount"></div>
+    <div style="margin-top:16px;">
+      <button class="btn btn-success" id="anonDownloadBtn" onclick="downloadAnon()">⬇ 下载脱敏文档</button>
+    </div>
+  </div>
+
+</div><!-- /tab-docx-anon -->
+
+<!-- ================================================================ -->
+<!-- TAB 3: Word restore                                               -->
+<!-- ================================================================ -->
+<div class="tab-panel" id="tab-docx-restore">
+
+  <div class="card">
+    <h2>🔓 上传脱敏文档进行还原</h2>
+
+    <div class="upload-area" id="restoreUploadArea">
+      <input type="file" id="restoreFile" accept=".docx" onchange="onRestoreFileChange(this)" />
+      <div class="upload-icon">📂</div>
+      <p>点击或拖拽脱敏后的 .docx 文件到此处</p>
+      <div class="file-name" id="restoreFileName"></div>
+    </div>
+
+    <div class="controls" style="margin-top:16px;">
+      <input type="text" id="sessionIdInput" placeholder="粘贴 Session ID…" />
+      <button class="btn btn-success" id="restoreBtn" onclick="restoreDocx()">开始还原</button>
+      <div class="spinner" id="restoreSpinner"></div>
+    </div>
+    <div class="error-box" id="restoreError"></div>
+    <div class="success-box" id="restoreSuccess"></div>
+  </div>
+
+  <div class="card result-section" id="restoreResultCard">
+    <h2>✅ 还原完成</h2>
+    <button class="btn btn-success" id="restoreDownloadBtn" onclick="downloadRestored()">⬇ 下载还原文档</button>
+  </div>
+
+</div><!-- /tab-docx-restore -->
+
 
 <script>
+  // ----------------------------------------------------------------
+  // Tab switching
+  // ----------------------------------------------------------------
+  function switchTab(name, btn) {
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.getElementById("tab-" + name).classList.add("active");
+    btn.classList.add("active");
+  }
+
+  // ----------------------------------------------------------------
+  // Chat
+  // ----------------------------------------------------------------
   async function sendMessage() {
     const message = document.getElementById("userInput").value.trim();
     if (!message) return;
 
-    const language = document.getElementById("langSelect").value;
-    const modelKey = document.getElementById("modelSelect").value;
-    const btn = document.getElementById("sendBtn");
-    const spinner = document.getElementById("spinner");
-    const errorBox = document.getElementById("errorBox");
+    const language  = document.getElementById("langSelect").value;
+    const modelKey  = document.getElementById("modelSelect").value;
+    const btn       = document.getElementById("sendBtn");
+    const spinner   = document.getElementById("chatSpinner");
+    const errorBox  = document.getElementById("chatError");
 
-    // Reset UI
     errorBox.style.display = "none";
-    document.querySelectorAll(".result-section").forEach(el => el.style.display = "none");
+    document.querySelectorAll("#tab-chat .result-section").forEach(el => el.style.display = "none");
     btn.disabled = true;
     spinner.style.display = "block";
 
@@ -270,14 +386,8 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, language, model_key: modelKey }),
       });
-
-      if (!resp.ok) {
-        const err = await resp.json();
-        throw new Error(err.detail || `HTTP ${resp.status}`);
-      }
-
-      const data = await resp.json();
-      renderResults(data);
+      if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail || `HTTP ${resp.status}`); }
+      renderChatResults(await resp.json());
     } catch (e) {
       errorBox.textContent = "❌ 错误：" + e.message;
       errorBox.style.display = "block";
@@ -287,59 +397,180 @@
     }
   }
 
-  function renderResults(data) {
-    // PII table
-    const piiCard = document.getElementById("piiCard");
+  function renderChatResults(data) {
     const piiContent = document.getElementById("piiContent");
-
     if (data.pii_detected.length === 0) {
       piiContent.innerHTML = '<p class="no-pii">未检测到 PII 信息</p>';
     } else {
-      let rows = data.pii_detected.map(item => `
-        <tr>
-          <td><span class="badge">${escHtml(item.placeholder)}</span></td>
-          <td>${escHtml(item.original)}</td>
-        </tr>
-      `).join("");
-      piiContent.innerHTML = `
-        <table class="pii-table">
-          <thead><tr><th>占位符</th><th>原始值</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>`;
+      piiContent.innerHTML = `<table class="pii-table">
+        <thead><tr><th>占位符</th><th>原始值</th></tr></thead>
+        <tbody>${data.pii_detected.map(i =>
+          `<tr><td><span class="badge">${escHtml(i.placeholder)}</span></td><td>${escHtml(i.original)}</td></tr>`
+        ).join("")}</tbody></table>`;
     }
-    piiCard.style.display = "block";
-
-    // Anonymized prompt
+    document.getElementById("piiCard").style.display = "block";
     document.getElementById("anonymizedText").textContent = data.anonymized_message;
     document.getElementById("promptCard").style.display = "block";
-
-    // Responses
     document.getElementById("rawResponse").textContent = data.llm_response;
     document.getElementById("restoredResponse").textContent = data.restored_response;
     document.getElementById("responseCard").style.display = "block";
   }
 
-  function escHtml(str) {
-    return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  // ----------------------------------------------------------------
+  // Word anonymize
+  // ----------------------------------------------------------------
+  let _anonBlob = null, _anonFilename = "";
+
+  function onAnonFileChange(input) {
+    document.getElementById("anonFileName").textContent = input.files[0]?.name || "";
   }
 
-  // Allow Ctrl+Enter to submit
+  async function anonymizeDocx() {
+    const fileInput = document.getElementById("anonFile");
+    if (!fileInput.files[0]) { alert("请先选择文件"); return; }
+
+    const btn     = document.getElementById("anonBtn");
+    const spinner = document.getElementById("anonSpinner");
+    const errBox  = document.getElementById("anonError");
+    const okBox   = document.getElementById("anonSuccess");
+    const resCard = document.getElementById("anonResultCard");
+
+    errBox.style.display = "none";
+    okBox.style.display  = "none";
+    resCard.style.display = "none";
+    btn.disabled = true;
+    spinner.style.display = "block";
+
+    try {
+      const form = new FormData();
+      form.append("file", fileInput.files[0]);
+      form.append("language", document.getElementById("anonLang").value);
+
+      const resp = await fetch("/docx/anonymize", { method: "POST", body: form });
+      if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail || `HTTP ${resp.status}`); }
+
+      const sessionId = resp.headers.get("X-Session-Id");
+      const piiCount  = resp.headers.get("X-PII-Count");
+      _anonBlob = await resp.blob();
+      _anonFilename = resp.headers.get("Content-Disposition")?.match(/filename="?([^"]+)"?/)?.[1]
+                      || "anonymized.docx";
+
+      document.getElementById("anonSessionId").innerHTML =
+        `<span id="sessionIdText">${escHtml(sessionId)}</span>
+         <button class="copy-btn" onclick="copySessionId()">复制</button>`;
+      document.getElementById("anonPiiCount").textContent =
+        `共检测并替换 ${piiCount} 处 PII`;
+      resCard.style.display = "block";
+      okBox.textContent = "✅ 脱敏成功，请下载文档并保存 Session ID。";
+      okBox.style.display = "block";
+    } catch (e) {
+      errBox.textContent = "❌ 错误：" + e.message;
+      errBox.style.display = "block";
+    } finally {
+      btn.disabled = false;
+      spinner.style.display = "none";
+    }
+  }
+
+  function downloadAnon() {
+    if (!_anonBlob) return;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(_anonBlob);
+    a.download = _anonFilename;
+    a.click();
+  }
+
+  function copySessionId() {
+    const text = document.getElementById("sessionIdText")?.textContent;
+    if (text) navigator.clipboard.writeText(text).then(() => alert("已复制 Session ID"));
+  }
+
+  // ----------------------------------------------------------------
+  // Word restore
+  // ----------------------------------------------------------------
+  let _restoreBlob = null, _restoreFilename = "";
+
+  function onRestoreFileChange(input) {
+    document.getElementById("restoreFileName").textContent = input.files[0]?.name || "";
+  }
+
+  async function restoreDocx() {
+    const fileInput  = document.getElementById("restoreFile");
+    const sessionId  = document.getElementById("sessionIdInput").value.trim();
+    if (!fileInput.files[0]) { alert("请先选择文件"); return; }
+    if (!sessionId)           { alert("请输入 Session ID"); return; }
+
+    const btn     = document.getElementById("restoreBtn");
+    const spinner = document.getElementById("restoreSpinner");
+    const errBox  = document.getElementById("restoreError");
+    const okBox   = document.getElementById("restoreSuccess");
+    const resCard = document.getElementById("restoreResultCard");
+
+    errBox.style.display = "none";
+    okBox.style.display  = "none";
+    resCard.style.display = "none";
+    btn.disabled = true;
+    spinner.style.display = "block";
+
+    try {
+      const form = new FormData();
+      form.append("file", fileInput.files[0]);
+      form.append("session_id", sessionId);
+
+      const resp = await fetch("/docx/restore", { method: "POST", body: form });
+      if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail || `HTTP ${resp.status}`); }
+
+      _restoreBlob = await resp.blob();
+      _restoreFilename = resp.headers.get("Content-Disposition")?.match(/filename="?([^"]+)"?/)?.[1]
+                         || "restored.docx";
+
+      resCard.style.display = "block";
+      okBox.textContent = "✅ 还原成功，请下载文档。";
+      okBox.style.display = "block";
+    } catch (e) {
+      errBox.textContent = "❌ 错误：" + e.message;
+      errBox.style.display = "block";
+    } finally {
+      btn.disabled = false;
+      spinner.style.display = "none";
+    }
+  }
+
+  function downloadRestored() {
+    if (!_restoreBlob) return;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(_restoreBlob);
+    a.download = _restoreFilename;
+    a.click();
+  }
+
+  // ----------------------------------------------------------------
+  // Shared utils
+  // ----------------------------------------------------------------
+  function escHtml(str) {
+    return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
   document.getElementById("userInput").addEventListener("keydown", e => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) sendMessage();
   });
 
-  // Load model list on page load
+  // Drag-and-drop highlight
+  ["anonUploadArea","restoreUploadArea"].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener("dragover",  e => { e.preventDefault(); el.classList.add("dragover"); });
+    el.addEventListener("dragleave", () => el.classList.remove("dragover"));
+    el.addEventListener("drop",      e => { e.preventDefault(); el.classList.remove("dragover"); });
+  });
+
+  // Load model list
   (async () => {
     try {
-      const res = await fetch("/models");
-      const models = await res.json();
-      const sel = document.getElementById("modelSelect");
-      sel.innerHTML = models.map(m =>
+      const models = await (await fetch("/models")).json();
+      document.getElementById("modelSelect").innerHTML = models.map(m =>
         `<option value="${m.key}">${m.display_name}</option>`
       ).join("");
-    } catch (e) {
-      console.error("Failed to load models", e);
-    }
+    } catch(e) { console.error("Failed to load models", e); }
   })();
 </script>
 

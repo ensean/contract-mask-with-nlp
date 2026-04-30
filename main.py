@@ -7,16 +7,27 @@ Flow:
   3. Anonymized message is sent to AWS Bedrock (Claude)
   4. LLM response is restored (placeholders replaced back with original PII)
   5. Both anonymized prompt and restored response are returned to the client
+
+Word document flow:
+  POST /docx/anonymize  — upload .docx, get anonymized .docx + session_id
+  POST /docx/restore    — upload anonymized .docx + session_id, get restored .docx
 """
 
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse
+import uuid
+from pathlib import Path
+
+from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from pii_engine import PIIEngine
 from bedrock_client import invoke_model, MODELS, DEFAULT_MODEL_KEY
+from word_processor import anonymize_docx, restore_docx, list_sessions, load_session
+
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="PII-Safe LLM Chat", version="1.0.0")
 templates = Jinja2Templates(directory="templates")
@@ -105,3 +116,78 @@ async def list_models():
         {"key": k, "display_name": v.display_name}
         for k, v in MODELS.items()
     ]
+
+
+# ---------------------------------------------------------------------------
+# Word document routes
+# ---------------------------------------------------------------------------
+
+@app.post("/docx/anonymize")
+async def docx_anonymize(
+    file: UploadFile = File(...),
+    language: str = Form(default="zh"),
+):
+    """Upload a .docx, receive anonymized .docx + session_id."""
+    if not file.filename or not file.filename.lower().endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Only .docx files are supported.")
+
+    uid = uuid.uuid4().hex
+    input_path = UPLOAD_DIR / f"{uid}_input.docx"
+    output_path = UPLOAD_DIR / f"{uid}_anonymized.docx"
+
+    try:
+        input_path.write_bytes(await file.read())
+        session_id, mapping = anonymize_docx(input_path, output_path, language=language)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        input_path.unlink(missing_ok=True)  # remove original, keep anonymized
+
+    stem = Path(file.filename).stem
+    return FileResponse(
+        path=str(output_path),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=f"{stem}_anonymized.docx",
+        headers={"X-Session-Id": session_id, "X-PII-Count": str(len(mapping))},
+        background=None,
+    )
+
+
+@app.post("/docx/restore")
+async def docx_restore(
+    file: UploadFile = File(...),
+    session_id: str = Form(...),
+):
+    """Upload an anonymized .docx + session_id, receive restored .docx."""
+    if not file.filename or not file.filename.lower().endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Only .docx files are supported.")
+
+    try:
+        load_session(session_id)  # validate session exists before writing files
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found.")
+
+    uid = uuid.uuid4().hex
+    input_path = UPLOAD_DIR / f"{uid}_anon.docx"
+    output_path = UPLOAD_DIR / f"{uid}_restored.docx"
+
+    try:
+        input_path.write_bytes(await file.read())
+        restore_docx(input_path, output_path, session_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        input_path.unlink(missing_ok=True)
+
+    stem = Path(file.filename).stem.replace("_anonymized", "")
+    return FileResponse(
+        path=str(output_path),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=f"{stem}_restored.docx",
+    )
+
+
+@app.get("/docx/sessions")
+async def docx_sessions():
+    """List all stored anonymization sessions."""
+    return list_sessions()
