@@ -100,3 +100,7 @@ export ZH_SPACY_MODEL=/opt/models/zh_core_web_trf-3.8.0
 ```
 
 或直接打包 `.venv` 目录传输到内网机器。
+
+## 开发工具
+
+本项目使用 [Kiro](https://kiro.dev) 开发 —— 一款由 AWS 出品的 AI 驱动开发环境，支持 Spec 驱动开发、智能代码补全和 Agent 自动化工作流。
