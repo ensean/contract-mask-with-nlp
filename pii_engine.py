@@ -52,6 +52,8 @@ PATTERNS: dict[str, re.Pattern] = {
         r"[\u4e00-\u9fa5]{2,6}(?:省|自治区|市)"
         r"[\u4e00-\u9fa5]{2,10}(?:市|区|县|镇|乡)"
         r"[\u4e00-\u9fa5\d]{2,30}(?:路|街|道|巷|弄|号|楼|室|单元)[\d\-A-Za-z]*"
+        r"(?:[\u4e00-\u9fa5]{0,4}(?:栋|座|幢|号楼|号院)[\d\-A-Za-z\u4e00-\u9fa5]{0,10})?"
+        r"(?:[\d\-A-Za-z]{0,6}(?:室|层|楼|单元)[\d\-A-Za-z]{0,6})?"
     ),
 
     # ---- Contract entity PII ----
@@ -210,6 +212,8 @@ class PIIEngine:
         # Also run spaCy directly to catch ORG entities (companies)
         # that Presidio doesn't expose by default
         org_spans = self._spacy_org_spans(text, language)
+        # FAC/LOC spans supplement CN_ADDRESS regex for building/facility names
+        addr_spans = self._spacy_address_spans(text, language)
 
         # Non-name words that spaCy/Presidio sometimes misclassify as PERSON
         _NON_PERSON_WORDS = frozenset([
@@ -234,7 +238,7 @@ class PIIEngine:
                 pii_type=r.entity_type,
                 original=text_val,
             ))
-        return spans + org_spans
+        return spans + org_spans + addr_spans
 
     def _spacy_org_spans(self, text: str, language: str) -> list[PIISpan]:
         """
@@ -302,6 +306,49 @@ class PIIEngine:
                             pii_type="CN_COMPANY",
                             original=ent.text,
                         ))
+            return spans
+        except Exception:
+            return []
+
+    def _spacy_address_spans(self, text: str, language: str) -> list[PIISpan]:
+        """
+        Extract FAC (facility/building) and LOC (location) entities via spaCy
+        as CN_ADDRESS supplements.
+
+        FAC catches building-level details like "碧波路690号3号楼" that the
+        CN_ADDRESS regex may miss when the full province/city prefix is absent.
+        LOC catches sub-district locations like "朝阳区".
+
+        Only applies to Chinese text; English addresses are handled by Presidio.
+        Minimum length filter (≥4 chars) avoids single-char noise.
+        """
+        if language != "zh":
+            return []
+
+        # Tokens that look like FAC/LOC but are not address-sensitive
+        _NON_ADDRESS = frozenset([
+            "中华人民共和国", "中国", "全国", "境内", "境外", "海外",
+        ])
+
+        try:
+            import os, spacy
+            model = os.getenv("ZH_SPACY_MODEL", "zh_core_web_trf")
+            nlp = spacy.load(model)
+            doc = nlp(text)
+            spans: list[PIISpan] = []
+            for ent in doc.ents:
+                if ent.label_ not in ("FAC", "LOC"):
+                    continue
+                val = ent.text.strip()
+                if len(val) < 4:          # skip short noise
+                    continue
+                if val in _NON_ADDRESS:   # skip country-level non-sensitive
+                    continue
+                spans.append(PIISpan(
+                    start=ent.start_char, end=ent.end_char,
+                    pii_type="CN_ADDRESS",
+                    original=val,
+                ))
             return spans
         except Exception:
             return []
