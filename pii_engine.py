@@ -94,10 +94,12 @@ PATTERNS: dict[str, re.Pattern] = {
 # ---------------------------------------------------------------------------
 
 def _build_analyzer() -> AnalyzerEngine:
+    import os
+    zh_model = os.getenv("ZH_SPACY_MODEL", "zh_core_web_trf")
     configuration = {
         "nlp_engine_name": "spacy",
         "models": [
-            {"lang_code": "zh", "model_name": "zh_core_web_trf"},
+            {"lang_code": "zh", "model_name": zh_model},
             {"lang_code": "en", "model_name": "en_core_web_sm"},
         ],
     }
@@ -262,8 +264,9 @@ class PIIEngine:
         MAX_MERGE_GAP = 10
 
         try:
-            import spacy
-            model = "zh_core_web_trf" if language == "zh" else "en_core_web_sm"
+            import os, spacy
+            default_zh = "zh_core_web_trf"
+            model = os.getenv("ZH_SPACY_MODEL", default_zh) if language == "zh" else "en_core_web_sm"
             nlp = spacy.load(model)
             doc = nlp(text)
             ents = list(doc.ents)
