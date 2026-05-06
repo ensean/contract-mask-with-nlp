@@ -97,7 +97,7 @@ def _build_analyzer() -> AnalyzerEngine:
     configuration = {
         "nlp_engine_name": "spacy",
         "models": [
-            {"lang_code": "zh", "model_name": "zh_core_web_sm"},
+            {"lang_code": "zh", "model_name": "zh_core_web_trf"},
             {"lang_code": "en", "model_name": "en_core_web_sm"},
         ],
     }
@@ -263,7 +263,7 @@ class PIIEngine:
 
         try:
             import spacy
-            model = "zh_core_web_sm" if language == "zh" else "en_core_web_sm"
+            model = "zh_core_web_trf" if language == "zh" else "en_core_web_sm"
             nlp = spacy.load(model)
             doc = nlp(text)
             ents = list(doc.ents)
