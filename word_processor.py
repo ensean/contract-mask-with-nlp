@@ -45,7 +45,7 @@ _CONTRACT_FIELD_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("PERSON", re.compile(
         r"(?:法定代表人|经营者|联系人|负责人|授权代表)[/／]?"
         r"(?:经营者|代理人)?[：:]\s*"
-        r"([\u4e00-\u9fa5A-Za-z]{2,6})"
+        r"([\u4e00-\u9fa5A-Za-z]{2,8})"
         r"(?=[；;，,。\n（\s]|$)"
     )),
     # 住所 / 地址

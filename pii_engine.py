@@ -31,7 +31,13 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 PATTERNS: dict[str, re.Pattern] = {
     # ---- Standard PII ----
     "CN_PHONE": re.compile(
-        r"(?<!\d)(\+?86[-\s]?)?(1[3-9]\d{9})(?!\d)"
+        r"(?<!\d)"
+        r"(?:"
+        r"(\+?86[-\s]?)?(1[3-9]\d{9})"              # 手机号
+        r"|"
+        r"(0\d{2,3})[-\s](\d{3,4})[-\s]?(\d{4})"   # 固话：区号[-空格]号码（支持空格分隔）
+        r")"
+        r"(?!\d)"
     ),
     "CN_ID_CARD": re.compile(
         r"(?<!\d)"
@@ -66,9 +72,9 @@ PATTERNS: dict[str, re.Pattern] = {
 
     # 统一社会信用代码：1位登记管理部门 + 1位机构类别 + 6位行政区划 + 9位主体标识 + 1位校验
     "CN_USCC": re.compile(
-        r"(?<![0-9A-Z])"
-        r"[0-9A-HJ-NP-RT-Y]{2}\d{6}[0-9A-HJ-NP-RT-Y]{10}"
-        r"(?![0-9A-Z])"
+        r"(?<![0-9A-Za-z])"
+        r"[0-9A-HJ-NP-RT-Ya-hj-np-rt-y]{2}\d{6}[0-9A-HJ-NP-RT-Ya-hj-np-rt-y]{10}"
+        r"(?![0-9A-Za-z])"
     ),
 
     # 对公银行账号：8-20位数字，支持空格/短横线分隔，需要上下文关键词避免误判
@@ -234,9 +240,9 @@ class PIIEngine:
                 # Skip if contains known non-person words
                 if any(w in text_val for w in _NON_PERSON_WORDS):
                     continue
-                # Chinese name should be 2-6 chars
+                # Chinese name should be 2-8 chars
                 cn_chars = sum(1 for c in text_val if "\u4e00" <= c <= "\u9fa5")
-                if cn_chars > 0 and not (2 <= cn_chars <= 6):
+                if cn_chars > 0 and not (2 <= cn_chars <= 8):
                     continue
             spans.append(PIISpan(
                 start=r.start, end=r.end,
