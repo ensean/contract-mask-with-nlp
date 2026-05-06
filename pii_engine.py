@@ -199,7 +199,7 @@ class PIIEngine:
                 entities=[
                     "PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER",
                     "CREDIT_CARD", "IBAN_CODE", "IP_ADDRESS",
-                    "LOCATION", "DATE_TIME", "NRP",
+                    "NRP",
                 ],
             )
         except Exception:
@@ -209,12 +209,28 @@ class PIIEngine:
         # that Presidio doesn't expose by default
         org_spans = self._spacy_org_spans(text, language)
 
+        # Non-name words that spaCy/Presidio sometimes misclassify as PERSON
+        _NON_PERSON_WORDS = frozenset([
+            "张贴", "送达", "签收", "披露", "接收", "甲方", "乙方", "双方",
+            "第三方", "当事人", "代理人", "委托", "授权", "法院", "仲裁",
+            "通知", "文书", "留置", "邮寄", "退回",
+        ])
+
         spans: list[PIISpan] = []
         for r in results:
+            text_val = text[r.start:r.end]
+            if r.entity_type == "PERSON":
+                # Skip if contains known non-person words
+                if any(w in text_val for w in _NON_PERSON_WORDS):
+                    continue
+                # Chinese name should be 2-6 chars
+                cn_chars = sum(1 for c in text_val if "\u4e00" <= c <= "\u9fa5")
+                if cn_chars > 0 and not (2 <= cn_chars <= 6):
+                    continue
             spans.append(PIISpan(
                 start=r.start, end=r.end,
                 pii_type=r.entity_type,
-                original=text[r.start:r.end],
+                original=text_val,
             ))
         return spans + org_spans
 
@@ -236,6 +252,11 @@ class PIIEngine:
             "科技", "传媒", "文化", "网络", "信息", "技术", "工程",
             "建设", "贸易", "咨询", "服务", "发展", "电子", "医疗",
             "教育", "金融", "商贸", "物流", "能源", "地产", "置业",
+        ])
+        # Prefixes that indicate the text is NOT a company name
+        NON_COMPANY_PREFIXES = frozenset([
+            "甲方", "乙方", "双方", "第三方", "对方", "一方", "任何",
+            "收款", "付款", "开户", "账户",
         ])
         # Max gap (chars) between a GPE and a following ORG to merge them
         MAX_MERGE_GAP = 10
@@ -259,7 +280,8 @@ class PIIEngine:
                     gap = next_ent.start_char - ent.end_char
                     if next_ent.label_ in ("ORG", "COMPANY") and 0 <= gap <= MAX_MERGE_GAP:
                         merged_text = text[ent.start_char: next_ent.end_char]
-                        if any(kw in merged_text for kw in COMPANY_SUFFIXES):
+                        if (any(kw in merged_text for kw in COMPANY_SUFFIXES)
+                            and not any(merged_text.startswith(p) for p in NON_COMPANY_PREFIXES)):
                             spans.append(PIISpan(
                                 start=ent.start_char,
                                 end=next_ent.end_char,
@@ -270,7 +292,8 @@ class PIIEngine:
                             continue
 
                 if ent.label_ in ("ORG", "COMPANY"):
-                    if any(kw in ent.text for kw in COMPANY_SUFFIXES):
+                    if (any(kw in ent.text for kw in COMPANY_SUFFIXES)
+                            and not any(ent.text.startswith(p) for p in NON_COMPANY_PREFIXES)):
                         spans.append(PIISpan(
                             start=ent.start_char, end=ent.end_char,
                             pii_type="CN_COMPANY",
@@ -322,9 +345,13 @@ class PIIEngine:
     # ------------------------------------------------------------------
 
     def anonymize(self, text: str, language: str = "zh") -> AnonymizationResult:
-        """Replace PII in *text* with placeholders. Returns anonymized text + mapping."""
+        """Replace PII in *text* with placeholders. Resets counter before each call."""
         self._reset_counter()
+        return self._anonymize_no_reset(text, language)
 
+    def _anonymize_no_reset(self, text: str, language: str = "zh") -> AnonymizationResult:
+        """Like anonymize() but does NOT reset the counter.
+        Use when processing multiple texts sharing one document-level counter."""
         # Priority: dict > regex > presidio/spacy NER
         from dict_engine import get_dict
         dict_hits = get_dict().find_hits(text)
@@ -346,6 +373,12 @@ class PIIEngine:
         anonymized = text
         for span in reversed(all_spans):
             anonymized = anonymized[: span.start] + span.placeholder + anonymized[span.end :]
+
+        return AnonymizationResult(
+            anonymized_text=anonymized,
+            mapping=mapping,
+            spans=all_spans,
+        )
 
         return AnonymizationResult(
             anonymized_text=anonymized,

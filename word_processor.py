@@ -13,6 +13,7 @@ that a user can upload the anonymized docx later and restore it.
 
 import copy
 import json
+import re
 import uuid
 from pathlib import Path
 
@@ -20,10 +21,58 @@ from docx import Document
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
-from pii_engine import PIIEngine, AnonymizationResult
+from pii_engine import PIIEngine, AnonymizationResult, PIISpan
 
 SESSIONS_DIR = Path("sessions")
 SESSIONS_DIR.mkdir(exist_ok=True)
+
+# ---------------------------------------------------------------------------
+# Contract field patterns
+# Extracts values after common contract field labels like "名称：XXX"
+# These are used to supplement NER when spaCy misses labeled fields.
+# ---------------------------------------------------------------------------
+
+_CONTRACT_FIELD_PATTERNS: list[tuple[str, re.Pattern]] = [
+    # 公司名称
+    ("CN_COMPANY", re.compile(
+        r"(?:甲方|乙方|丙方|委托方|受托方|采购方|销售方|供应商|买方|卖方)"
+        r"(?:（[^）]*）)?"
+        r"(?:名称|单位)[：:]\s*"
+        r"([\u4e00-\u9fa5A-Za-z0-9（）()·&，,\s]{2,50}?)"
+        r"(?=[；;，,。\n]|$|\s{2})"
+    )),
+    # 法定代表人 / 经营者 / 联系人
+    ("PERSON", re.compile(
+        r"(?:法定代表人|经营者|联系人|负责人|授权代表)[/／]?"
+        r"(?:经营者|代理人)?[：:]\s*"
+        r"([\u4e00-\u9fa5A-Za-z]{2,6})"
+        r"(?=[；;，,。\n（\s]|$)"
+    )),
+    # 住所 / 地址
+    ("CN_ADDRESS", re.compile(
+        r"(?:住所|经营场所|地址|交货地点)[/／]?(?:经营场所)?[：:]\s*"
+        r"([\u4e00-\u9fa5A-Za-z0-9（）()#\-号楼室路街道区市省]{5,80})"
+        r"(?=[；;，,。\n]|$)"
+    )),
+]
+
+
+def _extract_contract_field_spans(text: str) -> list[PIISpan]:
+    """Extract PII spans from labeled contract fields (e.g. '名称：XX公司')."""
+    spans: list[PIISpan] = []
+    for pii_type, pattern in _CONTRACT_FIELD_PATTERNS:
+        for m in pattern.finditer(text):
+            value = m.group(1).strip()
+            if not value:
+                continue
+            start = m.start(1)
+            end = start + len(value)
+            spans.append(PIISpan(
+                start=start, end=end,
+                pii_type=pii_type,
+                original=value,
+            ))
+    return spans
 
 
 # ---------------------------------------------------------------------------
@@ -110,14 +159,34 @@ def _replace_text_in_paragraph_restore(paragraph, mapping: dict[str, str]) -> No
 # ---------------------------------------------------------------------------
 
 def _iter_paragraphs(doc: Document):
-    """Yield all paragraphs including those inside tables."""
-    # Body paragraphs
-    yield from doc.paragraphs
-    # Table cells
+    """
+    Yield all paragraphs in the document, including those inside:
+    - Regular body
+    - Tables (all cells)
+    - Structured Document Tags / Content Controls (w:sdtContent)
+      — these are commonly used in contract templates for fillable fields
+    """
+    from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph as DocxParagraph
+
+    def _paragraphs_from_element(element):
+        """Recursively yield Paragraph objects from an XML element."""
+        for child in element:
+            if child.tag == qn("w:p"):
+                yield DocxParagraph(child, element)
+            elif child.tag in (qn("w:sdtContent"), qn("w:tbl"),
+                               qn("w:tr"), qn("w:tc"), qn("w:sdt")):
+                yield from _paragraphs_from_element(child)
+
+    # Body paragraphs (includes sdtContent via recursive walk)
+    yield from _paragraphs_from_element(doc.element.body)
+
+    # Table cells (belt-and-suspenders for nested tables)
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
-                yield from cell.paragraphs
+                for para in cell.paragraphs:
+                    yield para
 
 
 def anonymize_docx(
@@ -133,9 +202,8 @@ def anonymize_docx(
     """
     doc = Document(str(input_path))
     engine = PIIEngine()
+    engine._reset_counter()   # single document-level counter, never reset again
 
-    # Collect all paragraph texts, run anonymization per paragraph,
-    # and accumulate a global mapping.
     global_mapping: dict[str, str] = {}
 
     for para in _iter_paragraphs(doc):
@@ -143,14 +211,28 @@ def anonymize_docx(
         if not text.strip():
             continue
 
-        result: AnonymizationResult = engine.anonymize(text, language=language)
-        if not result.mapping:
+        # Step 1: Contract field extraction (highest priority, label-anchored)
+        field_spans = _extract_contract_field_spans(text)
+
+        # Step 2: General PII engine with document-level counter (no reset)
+        result: AnonymizationResult = engine._anonymize_no_reset(text, language=language)
+
+        # Step 3: Merge — field spans add values not already found by engine
+        combined: dict[str, str] = {}  # original -> placeholder
+        for placeholder, original in result.mapping.items():
+            combined[original] = placeholder
+        for span in field_spans:
+            val = span.original
+            if val and val not in combined:
+                placeholder = engine._next_placeholder(span.pii_type)
+                combined[val] = placeholder
+
+        if not combined:
             continue
 
-        # Build original->placeholder dict for this paragraph
-        orig_to_placeholder = {v: k for k, v in result.mapping.items()}
-        _replace_text_in_paragraph(para, orig_to_placeholder)
-        global_mapping.update(result.mapping)  # placeholder -> original
+        para_mapping = {ph: orig for orig, ph in combined.items()}
+        _replace_text_in_paragraph(para, combined)
+        global_mapping.update(para_mapping)
 
     doc.save(str(output_path))
     session_id = save_session(global_mapping)
