@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from pii_engine import PIIEngine
 from bedrock_client import invoke_model, MODELS, DEFAULT_MODEL_KEY
 from word_processor import anonymize_docx, restore_docx, list_sessions, load_session
+from comprehend_client import analyze_text
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -191,3 +192,20 @@ async def docx_restore(
 async def docx_sessions():
     """List all stored anonymization sessions."""
     return list_sessions()
+
+
+# ---------------------------------------------------------------------------
+# Comprehend analysis route
+# ---------------------------------------------------------------------------
+
+class ComprehendRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=10000)
+    language: str = Field(default="zh", pattern="^(zh|en)$")
+
+
+@app.post("/comprehend/analyze")
+async def comprehend_analyze(payload: ComprehendRequest):
+    try:
+        return analyze_text(payload.text, language=payload.language)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))

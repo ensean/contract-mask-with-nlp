@@ -226,6 +226,7 @@
   <button class="tab-btn active" onclick="switchTab('chat', this)">💬 文本对话</button>
   <button class="tab-btn" onclick="switchTab('docx-anon', this)">📄 Word 脱敏</button>
   <button class="tab-btn" onclick="switchTab('docx-restore', this)">🔓 Word 还原</button>
+  <button class="tab-btn" onclick="switchTab('comprehend', this)">🔬 Comprehend 分析</button>
 </div>
 
 <!-- ================================================================ -->
@@ -349,6 +350,49 @@
   </div>
 
 </div><!-- /tab-docx-restore -->
+
+<!-- ================================================================ -->
+<!-- TAB 4: Comprehend analysis                                        -->
+<!-- ================================================================ -->
+<div class="tab-panel" id="tab-comprehend">
+
+  <div class="card">
+    <h2>🔬 AWS Comprehend 文本分析</h2>
+    <p style="color:#6b7280;font-size:0.88rem;margin-bottom:14px;">
+      使用 Amazon Comprehend 识别文本中的实体（Entity）、关键短语（Key Phrases）。
+      中文支持实体识别；英文额外支持 PII 检测。
+    </p>
+    <textarea id="comprehendInput" placeholder="粘贴合同文本或任意文本…" style="min-height:140px;"></textarea>
+    <div class="controls">
+      <select id="comprehendLang">
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+      </select>
+      <button class="btn btn-primary" id="comprehendBtn" onclick="runComprehend()">开始分析</button>
+      <div class="spinner" id="comprehendSpinner"></div>
+    </div>
+    <div class="error-box" id="comprehendError"></div>
+  </div>
+
+  <!-- Entities -->
+  <div class="card result-section" id="comprehendEntitiesCard">
+    <h2>🏷️ 实体识别（DetectEntities）</h2>
+    <div id="comprehendEntitiesContent"></div>
+  </div>
+
+  <!-- PII (English only) -->
+  <div class="card result-section" id="comprehendPiiCard">
+    <h2>🔒 PII 检测（DetectPiiEntities · 仅英文）</h2>
+    <div id="comprehendPiiContent"></div>
+  </div>
+
+  <!-- Key phrases -->
+  <div class="card result-section" id="comprehendKpCard">
+    <h2>🔑 关键短语（DetectKeyPhrases）</h2>
+    <div id="comprehendKpContent"></div>
+  </div>
+
+</div><!-- /tab-comprehend -->
 
 
 <script>
@@ -562,6 +606,149 @@
     el.addEventListener("dragleave", () => el.classList.remove("dragover"));
     el.addEventListener("drop",      e => { e.preventDefault(); el.classList.remove("dragover"); });
   });
+
+  // ----------------------------------------------------------------
+  // Comprehend analysis
+  // ----------------------------------------------------------------
+
+  // Color map for entity types
+  const ENTITY_COLORS = {
+    PERSON:          "#dbeafe",  // blue
+    ORGANIZATION:    "#fef9c3",  // yellow
+    LOCATION:        "#dcfce7",  // green
+    DATE:            "#f3e8ff",  // purple
+    QUANTITY:        "#ffedd5",  // orange
+    COMMERCIAL_ITEM: "#fce7f3",  // pink
+    EVENT:           "#e0f2fe",  // sky
+    TITLE:           "#f0fdf4",  // light green
+    OTHER:           "#f1f5f9",  // gray
+    // PII types
+    NAME:                 "#dbeafe",
+    PHONE:                "#dcfce7",
+    EMAIL:                "#fef9c3",
+    ADDRESS:              "#ffedd5",
+    CREDIT_DEBIT_NUMBER:  "#fce7f3",
+    BANK_ACCOUNT_NUMBER:  "#fce7f3",
+    SSN:                  "#fee2e2",
+  };
+
+  function entityColor(type) {
+    return ENTITY_COLORS[type] || "#f1f5f9";
+  }
+
+  async function runComprehend() {
+    const text = document.getElementById("comprehendInput").value.trim();
+    if (!text) return;
+
+    const language = document.getElementById("comprehendLang").value;
+    const btn      = document.getElementById("comprehendBtn");
+    const spinner  = document.getElementById("comprehendSpinner");
+    const errBox   = document.getElementById("comprehendError");
+
+    errBox.style.display = "none";
+    document.querySelectorAll("#tab-comprehend .result-section").forEach(el => el.style.display = "none");
+    btn.disabled = true;
+    spinner.style.display = "block";
+
+    try {
+      const resp = await fetch("/comprehend/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, language }),
+      });
+      if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail || `HTTP ${resp.status}`); }
+      renderComprehend(await resp.json(), text);
+    } catch (e) {
+      errBox.textContent = "❌ 错误：" + e.message;
+      errBox.style.display = "block";
+    } finally {
+      btn.disabled = false;
+      spinner.style.display = "none";
+    }
+  }
+
+  function renderComprehend(data, originalText) {
+    // ---- Entities ----
+    const entCard = document.getElementById("comprehendEntitiesCard");
+    const entContent = document.getElementById("comprehendEntitiesContent");
+    if (data.entities.length === 0) {
+      entContent.innerHTML = '<p class="no-pii">未检测到实体</p>';
+    } else {
+      // Highlighted text view
+      const highlighted = highlightSpans(originalText, data.entities, "type");
+      // Table
+      const rows = data.entities.map(e => `
+        <tr>
+          <td><span style="background:${entityColor(e.type)};padding:2px 8px;border-radius:4px;font-size:0.85rem;">${escHtml(e.type_label)}</span></td>
+          <td style="font-weight:600;">${escHtml(e.text)}</td>
+          <td style="color:#6b7280;font-size:0.85rem;">${(e.score * 100).toFixed(1)}%</td>
+        </tr>`).join("");
+      entContent.innerHTML = `
+        <div style="margin-bottom:16px;">
+          <div class="label" style="margin-bottom:8px;">高亮预览</div>
+          <div class="text-box" style="line-height:2;">${highlighted}</div>
+        </div>
+        <table class="pii-table">
+          <thead><tr><th>类型</th><th>文本</th><th>置信度</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+    entCard.style.display = "block";
+
+    // ---- PII (English only) ----
+    const piiCard = document.getElementById("comprehendPiiCard");
+    const piiContent = document.getElementById("comprehendPiiContent");
+    if (!data.pii_supported) {
+      piiContent.innerHTML = '<p class="no-pii">PII 检测仅支持英文，当前语言为中文。</p>';
+    } else if (data.pii_entities.length === 0) {
+      piiContent.innerHTML = '<p class="no-pii">未检测到 PII</p>';
+    } else {
+      const rows = data.pii_entities.map(p => `
+        <tr>
+          <td><span style="background:${entityColor(p.type)};padding:2px 8px;border-radius:4px;font-size:0.85rem;">${escHtml(p.type_label)}</span></td>
+          <td style="font-weight:600;">${escHtml(p.text)}</td>
+          <td style="color:#6b7280;font-size:0.85rem;">${(p.score * 100).toFixed(1)}%</td>
+        </tr>`).join("");
+      piiContent.innerHTML = `
+        <table class="pii-table">
+          <thead><tr><th>类型</th><th>文本</th><th>置信度</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+    piiCard.style.display = "block";
+
+    // ---- Key phrases ----
+    const kpCard = document.getElementById("comprehendKpCard");
+    const kpContent = document.getElementById("comprehendKpContent");
+    if (data.key_phrases.length === 0) {
+      kpContent.innerHTML = '<p class="no-pii">未检测到关键短语</p>';
+    } else {
+      const chips = data.key_phrases
+        .sort((a, b) => b.score - a.score)
+        .map(kp => `<span style="display:inline-block;background:#e0f2fe;border-radius:20px;padding:4px 12px;margin:4px;font-size:0.88rem;">${escHtml(kp.text)}<span style="color:#6b7280;font-size:0.78rem;margin-left:4px;">${(kp.score*100).toFixed(0)}%</span></span>`)
+        .join("");
+      kpContent.innerHTML = `<div style="line-height:2.2;">${chips}</div>`;
+    }
+    kpCard.style.display = "block";
+  }
+
+  function highlightSpans(text, spans, typeKey) {
+    if (!spans.length) return escHtml(text);
+    // Sort by begin offset
+    const sorted = [...spans].sort((a, b) => a.begin - b.begin);
+    let result = "";
+    let cursor = 0;
+    for (const span of sorted) {
+      if (span.begin < cursor) continue;
+      result += escHtml(text.slice(cursor, span.begin));
+      const color = entityColor(span[typeKey]);
+      const label = span.type_label || span[typeKey];
+      result += `<mark style="background:${color};border-radius:3px;padding:1px 3px;" title="${escHtml(label)}">${escHtml(span.text)}<sup style="font-size:0.65rem;color:#555;margin-left:2px;">${escHtml(label)}</sup></mark>`;
+      cursor = span.end;
+    }
+    result += escHtml(text.slice(cursor));
+    return result;
+  }
 
   // Load model list
   (async () => {
