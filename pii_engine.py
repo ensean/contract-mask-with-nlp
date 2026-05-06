@@ -43,7 +43,13 @@ PATTERNS: dict[str, re.Pattern] = {
         r"(?!\d)"
     ),
     "CN_BANK_CARD": re.compile(
-        r"(?<!\d)[3-9]\d{15,18}(?!\d)"
+        # Matches 16-19 digit card numbers, optionally separated by spaces or hyphens
+        # e.g. 6222021234567890123 or 6222 0210 0100 1234 567 or 6222-0210-0100-1234
+        r"(?<!\d)"
+        r"[3-9]\d{3}"                          # first 4 digits
+        r"(?:[\s\-]?\d{4}){3}"                 # 3 groups of 4 (with optional sep)
+        r"(?:[\s\-]?\d{1,3})?"                 # optional trailing 1-3 digits
+        r"(?!\d)"
     ),
     "EMAIL": re.compile(
         r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
@@ -65,12 +71,11 @@ PATTERNS: dict[str, re.Pattern] = {
         r"(?![0-9A-Z])"
     ),
 
-    # 对公银行账号：8-20位纯数字，需要上下文关键词避免误判
-    # 匹配"账号/账户/卡号：XXXXXXXX"形式
+    # 对公银行账号：8-20位数字，支持空格/短横线分隔，需要上下文关键词避免误判
     "CN_BANK_ACCOUNT": re.compile(
         r"(?:账[号户]|卡\s*号|account\s*(?:no\.?|number)?)"
         r"[\s:：]*"
-        r"(\d{8,20})",
+        r"(\d[\d\s\-]{6,22}\d)",               # 8-20 digits with optional spaces/hyphens
         re.IGNORECASE,
     ),
 
@@ -178,7 +183,7 @@ class PIIEngine:
                 if pii_type == "CN_BANK_ACCOUNT" and m.lastindex:
                     # Replace only the account number part, not the keyword prefix
                     start, end = m.span(1)
-                    original = m.group(1)
+                    original = m.group(1).strip()
                 else:
                     start, end = m.start(), m.end()
                     original = m.group()
