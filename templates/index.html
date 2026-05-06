@@ -227,6 +227,7 @@
   <button class="tab-btn" onclick="switchTab('docx-anon', this)">📄 Word 脱敏</button>
   <button class="tab-btn" onclick="switchTab('docx-restore', this)">🔓 Word 还原</button>
   <button class="tab-btn" onclick="switchTab('comprehend', this)">🔬 Comprehend 分析</button>
+  <button class="tab-btn" onclick="switchTab('dict', this)">📋 敏感词典</button>
 </div>
 
 <!-- ================================================================ -->
@@ -394,17 +395,40 @@
 
 </div><!-- /tab-comprehend -->
 
+<!-- ================================================================ -->
+<!-- TAB 5: Sensitive dictionary management                            -->
+<!-- ================================================================ -->
+<div class="tab-panel" id="tab-dict">
+
+  <div class="card">
+    <h2>📋 敏感词典管理</h2>
+    <p style="color:#6b7280;font-size:0.88rem;margin-bottom:14px;">
+      编辑 <code>sensitive_dict.txt</code>。<code>[分组名]</code> 定义分类，每行一个词条，
+      <code>#</code> 开头为注释。脱敏时命中词条将替换为 <code>&lt;&lt;分组名_N&gt;&gt;</code>，优先级高于正则和 NER。
+    </p>
+    <textarea id="dictEditor" style="min-height:360px;font-family:monospace;font-size:0.88rem;"></textarea>
+    <div class="controls">
+      <button class="btn btn-primary" onclick="saveDict()">💾 保存</button>
+      <button class="btn" style="background:#6b7280;" onclick="loadDict()">↺ 重新加载</button>
+      <div class="spinner" id="dictSpinner"></div>
+    </div>
+    <div class="error-box" id="dictError"></div>
+    <div class="success-box" id="dictSuccess"></div>
+  </div>
+
+  <!-- Preview: current groups -->
+  <div class="card" id="dictPreviewCard">
+    <h2>📂 当前词典内容</h2>
+    <div id="dictPreviewContent"><p class="no-pii">加载中…</p></div>
+  </div>
+
+</div><!-- /tab-dict -->
+
 
 <script>
   // ----------------------------------------------------------------
-  // Tab switching
+  // Tab switching (defined later, after dict patch)
   // ----------------------------------------------------------------
-  function switchTab(name, btn) {
-    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
-    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
-    document.getElementById("tab-" + name).classList.add("active");
-    btn.classList.add("active");
-  }
 
   // ----------------------------------------------------------------
   // Chat
@@ -748,6 +772,83 @@
     }
     result += escHtml(text.slice(cursor));
     return result;
+  }
+
+  // ----------------------------------------------------------------
+  // Sensitive dictionary management
+  // ----------------------------------------------------------------
+
+  async function loadDict() {
+    const spinner = document.getElementById("dictSpinner");
+    spinner.style.display = "block";
+    try {
+      const data = await (await fetch("/dict")).json();
+      document.getElementById("dictEditor").value = data.raw;
+      renderDictPreview(data.groups);
+    } catch(e) {
+      showDictMsg("error", "加载失败：" + e.message);
+    } finally {
+      spinner.style.display = "none";
+    }
+  }
+
+  async function saveDict() {
+    const content = document.getElementById("dictEditor").value;
+    const spinner = document.getElementById("dictSpinner");
+    spinner.style.display = "block";
+    document.getElementById("dictError").style.display = "none";
+    document.getElementById("dictSuccess").style.display = "none";
+    try {
+      const resp = await fetch("/dict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+      if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail || `HTTP ${resp.status}`); }
+      const data = await resp.json();
+      renderDictPreview(data.groups);
+      showDictMsg("success", "✅ 保存成功，词典已热更新。");
+    } catch(e) {
+      showDictMsg("error", "❌ 保存失败：" + e.message);
+    } finally {
+      spinner.style.display = "none";
+    }
+  }
+
+  function renderDictPreview(groups) {
+    const el = document.getElementById("dictPreviewContent");
+    if (!groups || Object.keys(groups).length === 0) {
+      el.innerHTML = '<p class="no-pii">词典为空</p>';
+      return;
+    }
+    el.innerHTML = Object.entries(groups).map(([group, terms]) => `
+      <div style="margin-bottom:14px;">
+        <div style="font-weight:600;color:#4f46e5;margin-bottom:6px;">
+          [${escHtml(group)}]
+          <span style="font-weight:400;color:#9ca3af;font-size:0.82rem;margin-left:6px;">${terms.length} 条</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          ${terms.map(t => `<span style="background:#ede9fe;color:#5b21b6;border-radius:4px;padding:2px 10px;font-size:0.85rem;">${escHtml(t)}</span>`).join("")}
+        </div>
+      </div>`).join("");
+  }
+
+  function showDictMsg(type, msg) {
+    const el = document.getElementById(type === "error" ? "dictError" : "dictSuccess");
+    el.textContent = msg;
+    el.style.display = "block";
+  }
+
+  // Auto-load dict when switching to dict tab
+  const _origSwitchTab = switchTab;
+  // Patch switchTab to load dict on first visit
+  let _dictLoaded = false;
+  function switchTab(name, btn) {
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.getElementById("tab-" + name).classList.add("active");
+    btn.classList.add("active");
+    if (name === "dict" && !_dictLoaded) { _dictLoaded = true; loadDict(); }
   }
 
   // Load model list

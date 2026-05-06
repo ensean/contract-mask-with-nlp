@@ -26,6 +26,7 @@ from pii_engine import PIIEngine
 from bedrock_client import invoke_model, MODELS, DEFAULT_MODEL_KEY
 from word_processor import anonymize_docx, restore_docx, list_sessions, load_session
 from comprehend_client import analyze_text
+from dict_engine import get_dict, DICT_FILE
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -192,6 +193,32 @@ async def docx_restore(
 async def docx_sessions():
     """List all stored anonymization sessions."""
     return list_sessions()
+
+
+# ---------------------------------------------------------------------------
+# Sensitive dictionary management routes
+# ---------------------------------------------------------------------------
+
+@app.get("/dict")
+async def dict_get():
+    """Return current dictionary content grouped by section."""
+    d = get_dict()
+    return {
+        "groups": d.groups(),
+        "raw": DICT_FILE.read_text(encoding="utf-8") if DICT_FILE.exists() else "",
+    }
+
+
+class DictSaveRequest(BaseModel):
+    content: str = Field(..., max_length=500_000)
+
+
+@app.post("/dict")
+async def dict_save(payload: DictSaveRequest):
+    """Overwrite the dictionary file and hot-reload."""
+    DICT_FILE.write_text(payload.content, encoding="utf-8")
+    get_dict().reload()
+    return {"groups": get_dict().groups()}
 
 
 # ---------------------------------------------------------------------------

@@ -287,16 +287,24 @@ class PIIEngine:
 
     @staticmethod
     def _merge_spans(
+        dict_spans: list[PIISpan],
         regex_spans: list[PIISpan],
         presidio_spans: list[PIISpan],
     ) -> list[PIISpan]:
-        regex_ranges = [(s.start, s.end) for s in regex_spans]
+        """
+        Merge three span sources with priority: dict > regex > presidio/NER.
+        Higher-priority spans block lower-priority spans that overlap with them.
+        """
+        def remove_overlapping(candidates: list[PIISpan], blockers: list[PIISpan]) -> list[PIISpan]:
+            blocker_ranges = [(s.start, s.end) for s in blockers]
+            return [
+                s for s in candidates
+                if not any(s.start < be and s.end > bs for bs, be in blocker_ranges)
+            ]
 
-        def overlaps_regex(span: PIISpan) -> bool:
-            return any(span.start < re_ and span.end > rs for rs, re_ in regex_ranges)
-
-        filtered_presidio = [s for s in presidio_spans if not overlaps_regex(s)]
-        all_spans = regex_spans + filtered_presidio
+        filtered_regex    = remove_overlapping(regex_spans, dict_spans)
+        filtered_presidio = remove_overlapping(presidio_spans, dict_spans + filtered_regex)
+        all_spans = dict_spans + filtered_regex + filtered_presidio
 
         if not all_spans:
             return []
@@ -317,9 +325,17 @@ class PIIEngine:
         """Replace PII in *text* with placeholders. Returns anonymized text + mapping."""
         self._reset_counter()
 
+        # Priority: dict > regex > presidio/spacy NER
+        from dict_engine import get_dict
+        dict_hits = get_dict().find_hits(text)
+        dict_spans = [
+            PIISpan(start=h.start, end=h.end, pii_type=h.group, original=h.term)
+            for h in dict_hits
+        ]
+
         regex_spans = self._regex_spans(text)
         presidio_spans = self._presidio_spans(text, language)
-        all_spans = self._merge_spans(regex_spans, presidio_spans)
+        all_spans = self._merge_spans(dict_spans, regex_spans, presidio_spans)
 
         mapping: dict[str, str] = {}
         for span in all_spans:
