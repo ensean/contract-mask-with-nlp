@@ -383,12 +383,6 @@ class PIIEngine:
             spans=all_spans,
         )
 
-        return AnonymizationResult(
-            anonymized_text=anonymized,
-            mapping=mapping,
-            spans=all_spans,
-        )
-
     @staticmethod
     def restore(text: str, mapping: dict[str, str]) -> str:
         """Replace placeholders in *text* back with original PII values."""
