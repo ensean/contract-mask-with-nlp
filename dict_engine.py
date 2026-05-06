@@ -2,7 +2,8 @@
 Dictionary-based sensitive information detection.
 
 Loads sensitive_dict.txt, supports:
-  - [GroupName] section headers → placeholder type becomes GroupName
+  - [GROUP_NAME] section headers (English uppercase recommended)
+    → placeholder type becomes GROUP_NAME, e.g. <<CN_COMPANY_1>>
   - One term per line, exact match, English case-insensitive
   - # comments and blank lines ignored
   - Hot-reload: re-reads file if modified since last load
