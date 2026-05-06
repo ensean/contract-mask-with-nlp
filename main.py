@@ -13,6 +13,7 @@ Word document flow:
   POST /docx/restore    — upload anonymized .docx + session_id, get restored .docx
 """
 
+import base64
 import uuid
 from pathlib import Path
 
@@ -129,30 +130,34 @@ async def docx_anonymize(
     file: UploadFile = File(...),
     language: str = Form(default="zh"),
 ):
-    """Upload a .docx, receive anonymized .docx + session_id."""
+    """Upload a .docx, receive anonymized .docx (base64) + session_id + mapping."""
     if not file.filename or not file.filename.lower().endswith(".docx"):
         raise HTTPException(status_code=400, detail="Only .docx files are supported.")
 
     uid = uuid.uuid4().hex
-    input_path = UPLOAD_DIR / f"{uid}_input.docx"
+    input_path  = UPLOAD_DIR / f"{uid}_input.docx"
     output_path = UPLOAD_DIR / f"{uid}_anonymized.docx"
 
     try:
         input_path.write_bytes(await file.read())
         session_id, mapping = anonymize_docx(input_path, output_path, language=language)
+        file_b64 = base64.b64encode(output_path.read_bytes()).decode()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        input_path.unlink(missing_ok=True)  # remove original, keep anonymized
+        input_path.unlink(missing_ok=True)
+        output_path.unlink(missing_ok=True)
 
     stem = Path(file.filename).stem
-    return FileResponse(
-        path=str(output_path),
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename=f"{stem}_anonymized.docx",
-        headers={"X-Session-Id": session_id, "X-PII-Count": str(len(mapping))},
-        background=None,
-    )
+    return {
+        "session_id":  session_id,
+        "filename":    f"{stem}_anonymized.docx",
+        "file_b64":    file_b64,
+        "pii_detected": [
+            {"placeholder": k, "original": v}
+            for k, v in mapping.items()
+        ],
+    }
 
 
 @app.post("/docx/restore")

@@ -303,6 +303,7 @@
     <div class="success-box" id="anonSuccess"></div>
   </div>
 
+  <!-- PII detected in docx -->
   <div class="card result-section" id="anonResultCard">
     <h2>✅ 脱敏完成</h2>
     <p style="color:#555; font-size:0.9rem; margin-bottom:12px;">
@@ -313,7 +314,10 @@
       —
       <button class="copy-btn" onclick="copySessionId()">复制</button>
     </div>
-    <div style="margin-top:8px; color:#6b7280; font-size:0.85rem;" id="anonPiiCount"></div>
+    <div style="margin-top:16px;" id="anonPiiSection">
+      <div class="label" style="margin-bottom:8px;">检测到的敏感信息</div>
+      <div id="anonPiiContent"></div>
+    </div>
     <div style="margin-top:16px;">
       <button class="btn btn-success" id="anonDownloadBtn" onclick="downloadAnon()">⬇ 下载脱敏文档</button>
     </div>
@@ -517,19 +521,39 @@
       const resp = await fetch("/docx/anonymize", { method: "POST", body: form });
       if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail || `HTTP ${resp.status}`); }
 
-      const sessionId = resp.headers.get("X-Session-Id");
-      const piiCount  = resp.headers.get("X-PII-Count");
-      _anonBlob = await resp.blob();
-      _anonFilename = resp.headers.get("Content-Disposition")?.match(/filename="?([^"]+)"?/)?.[1]
-                      || "anonymized.docx";
+      const data = await resp.json();
 
+      // Decode base64 → Blob for download
+      const binary = atob(data.file_b64);
+      const bytes  = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      _anonBlob     = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+      _anonFilename = data.filename;
+
+      // Session ID
       document.getElementById("anonSessionId").innerHTML =
-        `<span id="sessionIdText">${escHtml(sessionId)}</span>
+        `<span id="sessionIdText">${escHtml(data.session_id)}</span>
          <button class="copy-btn" onclick="copySessionId()">复制</button>`;
-      document.getElementById("anonPiiCount").textContent =
-        `共检测并替换 ${piiCount} 处 PII`;
+
+      // PII table
+      const piiContent = document.getElementById("anonPiiContent");
+      if (!data.pii_detected || data.pii_detected.length === 0) {
+        piiContent.innerHTML = '<p class="no-pii">未检测到敏感信息</p>';
+      } else {
+        const rows = data.pii_detected.map(item => `
+          <tr>
+            <td><span class="badge">${escHtml(item.placeholder)}</span></td>
+            <td>${escHtml(item.original)}</td>
+          </tr>`).join("");
+        piiContent.innerHTML = `
+          <table class="pii-table">
+            <thead><tr><th>占位符</th><th>原始值</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      }
+
       resCard.style.display = "block";
-      okBox.textContent = "✅ 脱敏成功，请下载文档并保存 Session ID。";
+      okBox.textContent = `✅ 脱敏成功，共检测 ${data.pii_detected.length} 处敏感信息。`;
       okBox.style.display = "block";
     } catch (e) {
       errBox.textContent = "❌ 错误：" + e.message;
