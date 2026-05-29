@@ -9,6 +9,7 @@
 | 💬 文本对话 | 输入文本自动脱敏后发给大模型，回复还原 PII 后展示 |
 | 📄 Word 脱敏 | 上传 `.docx`，输出带占位符的脱敏文档 + Session ID |
 | 🔓 Word 还原 | 上传脱敏文档 + Session ID，还原为原始文档 |
+| 🤖 一条龙审阅 | 上传合同 → 脱敏 → 大模型审阅（仅发送脱敏文本）→ **Word 批注**给出建议 → 还原后下载，同时提供脱敏证据副本 |
 | 🔬 Comprehend 分析 | 用 AWS Comprehend 识别实体、关键短语（中文支持） |
 | 📋 敏感词典 | 在线编辑 `sensitive_dict.txt`，热更新，无需重启 |
 
@@ -64,11 +65,68 @@ aws configure --profile test
 | Key | 模型 | Context |
 |-----|------|---------|
 | `claude-sonnet-4-6` | Claude Sonnet 4.6（默认） | 1M tokens |
+| `claude-opus-4-8` | Claude Opus 4.8 | 1M tokens |
 | `kimi-k2.5` | Kimi K2.5 (Moonshot AI) | 256K tokens |
 | `glm-5` | GLM 5 (Z.AI) | 200K tokens |
 | `minimax-m2.5` | MiniMax M2.5 | 196K tokens |
 
-区域：`us-east-1`
+区域：Bedrock 用 `ap-northeast-1`，Comprehend 用 `us-east-1`。
+
+> 注：Claude Opus 4.7+ 弃用了 `temperature` 等采样参数，代码对这类模型会自动省略该参数。
+
+## 一条龙合同审阅流程
+
+`🤖 一条龙审阅` Tab（`POST /docx/review`）将脱敏、大模型审阅、批注、还原串成一步：
+
+```
+上传 .docx
+  → ① 脱敏：在内存中的文档对象上把 PII 替换为占位符，建立 session 映射
+  → ② 从脱敏后的文档提取【纯文本】，发给 Bedrock 审阅
+       —— 离开本地的只有脱敏文本字符串，docx 文件本身从不外发
+  → ③ 还原文档（占位符 → 原始 PII，run 级替换以保留批注锚点）
+  → ④ 将建议作为 Word 批注（w:comment）锚定到还原后的原文
+  → ⑤ 返回「带批注的还原文档」+「脱敏证据副本」供下载
+```
+
+**关于"发给大模型的内容"——重要：**
+发给 LLM 的是 `extract_document_text(doc)` 提取的**脱敏后纯文本字符串**
+（Converse API 的 `messages[].content[].text`），**不是 docx 文件**。
+无论原始 / 脱敏 / 还原态的 docx 文件，全程都留在服务端，绝不上传给模型。
+
+**LLM 输出格式（分隔符，非 JSON）：**
+模型按如下分隔符块返回，避免中文内容里的引号 / 换行破坏解析（JSON 在此场景极易损坏）：
+
+```
+@@QUOTE@@
+<合同原文中需逐字匹配的定位片段>
+@@COMMENT@@
+<审阅意见，可多行、可含任意标点引号>
+@@END@@
+```
+
+无问题时模型只回一行 `@@NONE@@`。
+
+关键设计：
+
+- **PII 不出脱敏边界** —— 大模型只看到占位符纯文本；审阅意见中的占位符在写入批注前才还原。
+- **占位符文档级去重** —— 同一原始值（如同一公司名）在全文使用**同一个**占位符编号，
+  避免模型因 `<<CN_COMPANY_1>>` / `<<CN_COMPANY_4>>` 不同而误判为不同主体。
+- **批注精确锚定** —— 在批注片段边界处拆分 run（`mark_comment_range`），将批注绑定到精确文本范围而非整段，同时保留原有格式。
+- **跨段 / 定位失败兜底** —— 若模型给出的 `quote` 跨段落或无法逐字匹配，自动按行 / 句拆分，
+  用最长可匹配子片段锚定；仍无法定位的列入 `comments_unmatched` 在前端提示，不影响其余批注。
+- **脱敏证据副本** —— 同时返回脱敏版 docx 供下载，用于核对原始 PII 从未外发。
+- 依赖 `python-docx>=1.2.0` 的原生批注 API（`Document.add_comment`）。
+
+## 文件存储与生命周期
+
+| 类型 | 位置 | 生命周期 |
+|------|------|----------|
+| 上传 / 中间态 / 最终态 docx | `uploads/{uid}_*.docx` | **临时落盘**，读成 base64 回传后在 `finally` 中删除（`/docx/restore` 的 `_restored.docx` 例外，由 `FileResponse` 直接返回） |
+| 脱敏映射 | `sessions/{session_id}.json` | **持久化**，内容为 `占位符 → 原始 PII` 的明文，保留至手动清理 |
+
+- 文档通过 base64 直接回传浏览器生成下载，服务端不长期保留文件。
+- `sessions/*.json` 是明文敏感数据；`sessions/` 与 `uploads/` 已加入 `.gitignore`。
+- 路径为相对工作目录的 `uploads/`、`sessions/`，即从启动 uvicorn 的目录算起。
 
 ## 项目结构
 
@@ -77,11 +135,11 @@ aws configure --profile test
 ├── pii_engine.py          # PII 识别与脱敏引擎
 ├── bedrock_client.py      # AWS Bedrock 调用封装
 ├── comprehend_client.py   # AWS Comprehend 调用封装
-├── word_processor.py      # Word 文档脱敏/还原
+├── word_processor.py      # Word 文档脱敏/还原 + 一条龙审阅批注
 ├── dict_engine.py         # 词典匹配引擎（热更新）
 ├── sensitive_dict.txt     # 敏感词典（可在线编辑）
 ├── templates/
-│   └── index.html         # 前端页面（5个Tab）
+│   └── index.html         # 前端页面（6个Tab）
 ├── sessions/              # 脱敏 Session 映射存储
 ├── uploads/               # 临时文件目录
 └── requirements.txt
