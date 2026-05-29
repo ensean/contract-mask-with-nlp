@@ -34,3 +34,6 @@ env/
 # Logs
 *.log
 uvicorn.log
+# Runtime data
+sessions/
+uploads/
