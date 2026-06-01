@@ -16,7 +16,9 @@ Contract entity PII (合同主体信息，默认启用):
   - PERSON          自然人姓名（spaCy NER）
 """
 
+import os
 import re
+import threading
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -142,6 +144,66 @@ def get_analyzer() -> AnalyzerEngine:
 
 
 # ---------------------------------------------------------------------------
+# Cached spaCy model loader
+# ---------------------------------------------------------------------------
+# Loading a spaCy model (esp. zh_core_web_trf, a ~400MB BERT) is expensive.
+# Previously each NER helper called spacy.load() on every paragraph of every
+# document, which dominated latency and ballooned memory under concurrency.
+# We cache one loaded pipeline per model name.
+#
+# spaCy's nlp() is NOT guaranteed thread-safe for concurrent calls on the same
+# pipeline object. Since the one-stop review runs in a thread pool, we guard
+# each model's inference with its own lock. This serializes NER per model
+# (the heavy transformer work is the bottleneck anyway), while keeping results
+# correct and isolated.
+
+_spacy_models: dict[str, "object"] = {}
+_spacy_load_lock = threading.Lock()
+_spacy_infer_locks: dict[str, threading.Lock] = {}
+
+
+def _resolve_model_name(language: str) -> str:
+    if language == "zh":
+        return os.getenv("ZH_SPACY_MODEL", "zh_core_web_trf")
+    return "en_core_web_sm"
+
+
+def _get_spacy(model_name: str):
+    """Return a cached spaCy pipeline for *model_name*, loading once."""
+    nlp = _spacy_models.get(model_name)
+    if nlp is not None:
+        return nlp
+    with _spacy_load_lock:
+        nlp = _spacy_models.get(model_name)
+        if nlp is None:
+            import spacy
+            nlp = spacy.load(model_name)
+            _spacy_models[model_name] = nlp
+            _spacy_infer_locks[model_name] = threading.Lock()
+        return nlp
+
+
+def _spacy_analyze(language: str, text: str):
+    """
+    Run the cached spaCy pipeline on *text*, serialized per model for thread
+    safety. Returns a spaCy Doc, or None if loading/inference fails.
+    """
+    model_name = _resolve_model_name(language)
+    try:
+        nlp = _get_spacy(model_name)
+    except Exception:
+        return None
+    lock = _spacy_infer_locks.get(model_name)
+    try:
+        if lock is not None:
+            with lock:
+                return nlp(text)
+        return nlp(text)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Core data structures
 # ---------------------------------------------------------------------------
 
@@ -228,11 +290,14 @@ class PIIEngine:
         except Exception:
             results = []
 
+        # Run spaCy ONCE and share the parsed doc across both NER helpers
+        # (company + address) to avoid two transformer passes over the same text.
+        spacy_doc = _spacy_analyze(language, text)
         # Also run spaCy directly to catch ORG entities (companies)
         # that Presidio doesn't expose by default
-        org_spans = self._spacy_org_spans(text, language)
+        org_spans = self._spacy_org_spans(text, language, doc=spacy_doc)
         # FAC/LOC spans supplement CN_ADDRESS regex for building/facility names
-        addr_spans = self._spacy_address_spans(text, language)
+        addr_spans = self._spacy_address_spans(text, language, doc=spacy_doc)
 
         # Non-name words that spaCy/Presidio sometimes misclassify as PERSON
         _NON_PERSON_WORDS = frozenset([
@@ -259,9 +324,12 @@ class PIIEngine:
             ))
         return spans + org_spans + addr_spans
 
-    def _spacy_org_spans(self, text: str, language: str) -> list[PIISpan]:
+    def _spacy_org_spans(self, text: str, language: str, doc=None) -> list[PIISpan]:
         """
         Extract company/organization names via spaCy NER.
+
+        *doc* may be a pre-computed spaCy Doc (shared with other helpers to
+        avoid re-running the model); if None, it is computed here.
 
         Two problems with zh_core_web_sm we work around:
         1. "北京星辰科技有限公司" is split into GPE("北京") + ORG("科技有限公司"),
@@ -287,11 +355,10 @@ class PIIEngine:
         MAX_MERGE_GAP = 10
 
         try:
-            import os, spacy
-            default_zh = "zh_core_web_trf"
-            model = os.getenv("ZH_SPACY_MODEL", default_zh) if language == "zh" else "en_core_web_sm"
-            nlp = spacy.load(model)
-            doc = nlp(text)
+            if doc is None:
+                doc = _spacy_analyze(language, text)
+            if doc is None:
+                return []
             ents = list(doc.ents)
             spans: list[PIISpan] = []
             skip_next = False
@@ -329,10 +396,13 @@ class PIIEngine:
         except Exception:
             return []
 
-    def _spacy_address_spans(self, text: str, language: str) -> list[PIISpan]:
+    def _spacy_address_spans(self, text: str, language: str, doc=None) -> list[PIISpan]:
         """
         Extract FAC (facility/building) and LOC (location) entities via spaCy
         as CN_ADDRESS supplements.
+
+        *doc* may be a pre-computed spaCy Doc (shared with other helpers to
+        avoid re-running the model); if None, it is computed here.
 
         FAC catches building-level details like "碧波路690号3号楼" that the
         CN_ADDRESS regex may miss when the full province/city prefix is absent.
@@ -350,10 +420,10 @@ class PIIEngine:
         ])
 
         try:
-            import os, spacy
-            model = os.getenv("ZH_SPACY_MODEL", "zh_core_web_trf")
-            nlp = spacy.load(model)
-            doc = nlp(text)
+            if doc is None:
+                doc = _spacy_analyze(language, text)
+            if doc is None:
+                return []
             spans: list[PIISpan] = []
             for ent in doc.ents:
                 if ent.label_ not in ("FAC", "LOC"):
