@@ -3,14 +3,12 @@ AWS Bedrock client wrapper.
 Uses the 'test' AWS CLI profile.
 
 Supported models:
-  - Claude Sonnet 4.6  (Anthropic)   — anthropic.claude-sonnet-4-6
-  - Kimi K2.5          (Moonshot AI) — moonshotai.kimi-k2.5
-  - GLM 5              (Z.AI)        — zai.glm-5
-  - MiniMax M2.5       (MiniMax)     — minimax.minimax-m2.5
+  - Claude Sonnet 4.6  (Anthropic) — global.anthropic.claude-sonnet-4-6
+  - Claude Opus 4.8    (Anthropic) — global.anthropic.claude-opus-4-8
 
-Kimi / GLM / MiniMax use the OpenAI-compatible Converse API body format,
-while Claude uses its own anthropic_version body format.
-We normalise everything through boto3's converse() call which works for all.
+All models are invoked through boto3's converse() call. Note that Claude
+Opus 4.7+ deprecated sampling parameters (temperature/top_p/top_k), so
+temperature is omitted for those via ModelInfo.supports_temperature.
 """
 
 import logging
@@ -59,21 +57,6 @@ MODELS: dict[str, ModelInfo] = {
         # Opus 4.7+ deprecated sampling params (temperature/top_p/top_k);
         # passing temperature triggers a ValidationException.
         supports_temperature=False,
-    ),
-    "kimi-k2.5": ModelInfo(
-        model_id="moonshotai.kimi-k2.5",
-        display_name="Kimi K2.5 (Moonshot AI)",
-        max_tokens=8192,
-    ),
-    "glm-5": ModelInfo(
-        model_id="zai.glm-5",
-        display_name="GLM 5 (Z.AI)",
-        max_tokens=8192,
-    ),
-    "minimax-m2.5": ModelInfo(
-        model_id="minimax.minimax-m2.5",
-        display_name="MiniMax M2.5 (MiniMax)",
-        max_tokens=8192,
     ),
 }
 

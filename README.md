@@ -66,9 +66,6 @@ aws configure --profile test
 |-----|------|---------|
 | `claude-sonnet-4-6` | Claude Sonnet 4.6（默认） | 1M tokens |
 | `claude-opus-4-8` | Claude Opus 4.8 | 1M tokens |
-| `kimi-k2.5` | Kimi K2.5 (Moonshot AI) | 256K tokens |
-| `glm-5` | GLM 5 (Z.AI) | 200K tokens |
-| `minimax-m2.5` | MiniMax M2.5 | 196K tokens |
 
 区域：Bedrock 用 `ap-northeast-1`，Comprehend 用 `us-east-1`。
 
