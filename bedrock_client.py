@@ -3,6 +3,7 @@ AWS Bedrock client wrapper.
 Uses the 'test' AWS CLI profile.
 
 Supported models:
+  - Claude Haiku 4.5   (Anthropic) — global.anthropic.claude-haiku-4-5-20251001-v1:0 (default)
   - Claude Sonnet 4.6  (Anthropic) — global.anthropic.claude-sonnet-4-6
   - Claude Opus 4.8    (Anthropic) — global.anthropic.claude-opus-4-8
 
@@ -12,8 +13,10 @@ temperature is omitted for those via ModelInfo.supports_temperature.
 """
 
 import logging
+import os
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 from typing import NamedTuple
 
@@ -22,6 +25,15 @@ logger = logging.getLogger("pii.bedrock")
 
 AWS_REGION = "ap-northeast-1"
 AWS_PROFILE = "test"
+
+# Bedrock client timeouts. The default boto3 read timeout is 60s, which a long
+# document + slow model (e.g. Opus with maxTokens maxed out) can exceed,
+# causing a ReadTimeoutError. The /docx/review pipeline runs as a background
+# job and is polled, so it is NOT bound by any proxy/CDN timeout — we can
+# safely wait several minutes for Bedrock. Overridable via env vars.
+BEDROCK_READ_TIMEOUT = int(os.getenv("BEDROCK_READ_TIMEOUT", "300"))      # seconds
+BEDROCK_CONNECT_TIMEOUT = int(os.getenv("BEDROCK_CONNECT_TIMEOUT", "10")) # seconds
+BEDROCK_MAX_ATTEMPTS = int(os.getenv("BEDROCK_MAX_ATTEMPTS", "2"))        # incl. first try
 
 PII_PLACEHOLDER_INSTRUCTION = (
     "The user's message may contain placeholders in the format <<TYPE_N>> "
@@ -45,6 +57,11 @@ class ModelInfo(NamedTuple):
 
 
 MODELS: dict[str, ModelInfo] = {
+    "claude-haiku-4-5": ModelInfo(
+        model_id="global.anthropic.claude-haiku-4-5-20251001-v1:0",
+        display_name="Claude Haiku 4.5 (Anthropic)",
+        max_tokens=8192,
+    ),
     "claude-sonnet-4-6": ModelInfo(
         model_id="global.anthropic.claude-sonnet-4-6",
         display_name="Claude Sonnet 4.6 (Anthropic)",
@@ -60,7 +77,7 @@ MODELS: dict[str, ModelInfo] = {
     ),
 }
 
-DEFAULT_MODEL_KEY = "claude-sonnet-4-6"
+DEFAULT_MODEL_KEY = "claude-haiku-4-5"
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +86,12 @@ DEFAULT_MODEL_KEY = "claude-sonnet-4-6"
 
 def _get_client():
     session = boto3.Session(profile_name=AWS_PROFILE, region_name=AWS_REGION)
-    return session.client("bedrock-runtime")
+    config = Config(
+        read_timeout=BEDROCK_READ_TIMEOUT,
+        connect_timeout=BEDROCK_CONNECT_TIMEOUT,
+        retries={"max_attempts": BEDROCK_MAX_ATTEMPTS, "mode": "standard"},
+    )
+    return session.client("bedrock-runtime", config=config)
 
 
 def _build_inference_config(info: ModelInfo, temperature: float) -> dict:

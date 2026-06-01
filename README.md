@@ -87,12 +87,22 @@ aws configure --profile test
 
 | Key | 模型 | Context |
 |-----|------|---------|
-| `claude-sonnet-4-6` | Claude Sonnet 4.6（默认） | 1M tokens |
+| `claude-haiku-4-5` | Claude Haiku 4.5（默认） | 200K tokens |
+| `claude-sonnet-4-6` | Claude Sonnet 4.6 | 1M tokens |
 | `claude-opus-4-8` | Claude Opus 4.8 | 1M tokens |
 
 区域：Bedrock 用 `ap-northeast-1`，Comprehend 用 `us-east-1`。
 
 > 注：Claude Opus 4.7+ 弃用了 `temperature` 等采样参数，代码对这类模型会自动省略该参数。
+
+**Bedrock 超时配置**：审阅长文档 + 慢模型可能超过 boto3 默认的 60s read timeout。
+客户端默认 read timeout 已调到 **300s**（一条龙审阅走异步 job + 轮询，不受代理/CDN 超时限制，后端可安全长等）。可用环境变量覆盖：
+
+```bash
+export BEDROCK_READ_TIMEOUT=300    # 读超时秒数（默认 300）
+export BEDROCK_CONNECT_TIMEOUT=10  # 连接超时秒数（默认 10）
+export BEDROCK_MAX_ATTEMPTS=2      # 最大尝试次数，含首次（默认 2）
+```
 
 ## 一条龙合同审阅流程
 
