@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -27,10 +27,13 @@ from pii_engine import PIIEngine
 from bedrock_client import invoke_model, MODELS, DEFAULT_MODEL_KEY
 from word_processor import (
     anonymize_docx, restore_docx, list_sessions, load_session,
-    review_and_comment_docx,
+    run_review_job,
 )
 from comprehend_client import analyze_text
 from dict_engine import get_dict, DICT_FILE
+from job_manager import (
+    job_manager, STATUS_PROCESSING, STATUS_DONE, STATUS_ERROR,
+)
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -204,16 +207,18 @@ async def docx_sessions():
 
 
 @app.post("/docx/review")
-async def docx_review(
+async def docx_review_submit(
     file: UploadFile = File(...),
     language: str = Form(default="zh"),
     model_key: str = Form(default=DEFAULT_MODEL_KEY),
 ):
     """
-    One-stop pipeline: upload a .docx, anonymize it, send to the LLM for
-    contract review, restore the PII, and return the restored document with
-    the review suggestions attached as Word comments (批注) — plus a
-    base64-encoded file for download.
+    Submit a one-stop contract-review job.
+
+    The heavy pipeline (anonymize → LLM review → restore → comment) can take
+    10-40s, which would exceed proxy/CDN origin timeouts (e.g. CloudFront).
+    So we run it as a background job and return immediately with a job_id;
+    the client then polls GET /docx/review/{job_id} until it completes.
     """
     if not file.filename or not file.filename.lower().endswith(".docx"):
         raise HTTPException(status_code=400, detail="Only .docx files are supported.")
@@ -225,37 +230,45 @@ async def docx_review(
     output_path = UPLOAD_DIR / f"{uid}_reviewed.docx"
     anon_path   = UPLOAD_DIR / f"{uid}_anonymized.docx"
 
+    # Persist the upload synchronously (cheap), then hand off the heavy work.
     try:
         input_path.write_bytes(await file.read())
-        result = review_and_comment_docx(
-            input_path, output_path,
-            model_key=model_key, language=language,
-            anonymized_output_path=anon_path,
-        )
-        file_b64 = base64.b64encode(output_path.read_bytes()).decode()
-        anon_b64 = base64.b64encode(anon_path.read_bytes()).decode()
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
         input_path.unlink(missing_ok=True)
-        output_path.unlink(missing_ok=True)
-        anon_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
     stem = Path(file.filename).stem
-    return {
-        "session_id":   result["session_id"],
-        "filename":     f"{stem}_reviewed.docx",
-        "file_b64":     file_b64,
-        "anonymized_filename": f"{stem}_anonymized.docx",
-        "anonymized_b64":      anon_b64,
-        "pii_detected": result["pii_detected"],
-        "comments":     result["comments"],
-        "comments_total":     result["comments_total"],
-        "comments_applied":   result["comments_applied"],
-        "comments_unmatched": result["comments_unmatched"],
-    }
+    job_id = job_manager.submit(
+        run_review_job,
+        input_path, output_path, anon_path,
+        model_key, language, stem,
+    )
+    return {"job_id": job_id, "status": STATUS_PROCESSING}
+
+
+@app.get("/docx/review/{job_id}")
+async def docx_review_status(job_id: str):
+    """
+    Poll a review job. While running, returns a lightweight status payload
+    (fast — never hits a proxy timeout). On completion returns the full
+    result; on failure returns the error with an appropriate status code.
+    """
+    job = job_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found or expired.")
+
+    if job.status == STATUS_PROCESSING:
+        return {"status": STATUS_PROCESSING, "elapsed": job.elapsed}
+
+    if job.status == STATUS_ERROR:
+        # 502 mirrors the old synchronous behavior (most failures are Bedrock errors).
+        return JSONResponse(
+            status_code=502,
+            content={"status": STATUS_ERROR, "elapsed": job.elapsed, "detail": job.error},
+        )
+
+    # STATUS_DONE
+    return {"status": STATUS_DONE, "elapsed": job.elapsed, "result": job.result}
 
 
 # ---------------------------------------------------------------------------

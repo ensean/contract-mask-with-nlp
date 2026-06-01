@@ -117,6 +117,23 @@ aws configure --profile test
 - **脱敏证据副本** —— 同时返回脱敏版 docx 供下载，用于核对原始 PII 从未外发。
 - 依赖 `python-docx>=1.2.0` 的原生批注 API（`Document.add_comment`）。
 
+**异步任务模式（应对 CloudFront / 代理超时）：**
+审阅要调大模型，单请求耗时 10-40s，会超出 CloudFront 默认 30s（最高约 60s）的 origin 响应超时。
+因此 `/docx/review` 改为「提交 + 轮询」两段式，每个请求都是毫秒级，不触发任何代理/CDN 超时：
+
+```
+POST /docx/review            上传文档，立即返回 { job_id, status: "processing" }
+                             重活在后台线程池跑（job_manager.py）
+GET  /docx/review/{job_id}   轮询：
+                               processing → { status, elapsed }
+                               done       → { status, elapsed, result: {...} }
+                               error      → 502 { status, detail }
+```
+
+- 前端提交后每 3s 轮询一次，显示「审阅中…（已等待 Ns）」，完成后再渲染结果与下载。
+- 任务状态存于进程内存（`JobManager`），适用于单 worker 部署；完成的任务保留 30 分钟（TTL）后回收。
+- 多 worker / 多实例部署需把内存任务表替换为 Redis 或数据库。
+
 ## 文件存储与生命周期
 
 | 类型 | 位置 | 生命周期 |
@@ -136,6 +153,7 @@ aws configure --profile test
 ├── bedrock_client.py      # AWS Bedrock 调用封装
 ├── comprehend_client.py   # AWS Comprehend 调用封装
 ├── word_processor.py      # Word 文档脱敏/还原 + 一条龙审阅批注
+├── job_manager.py         # 异步任务管理（一条龙审阅后台执行 + 轮询）
 ├── dict_engine.py         # 词典匹配引擎（热更新）
 ├── sensitive_dict.txt     # 敏感词典（可在线编辑）
 ├── templates/
