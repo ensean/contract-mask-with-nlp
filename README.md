@@ -52,7 +52,30 @@ python -m spacy download en_core_web_sm
 
 浏览器访问 http://localhost:8000
 
-## AWS 配置
+## Docker 部署（app + Redis）
+
+提供了 `Dockerfile` 与 `docker-compose.yml`，一条命令拉起服务 + Redis：
+
+```bash
+docker compose up -d --build
+```
+
+- `app`：构建时已把 spaCy 模型（含 ~400MB 的 `zh_core_web_trf`）打进镜像，容器离线即可启动。
+- `redis`：开启 AOF 持久化，作为异步任务状态的共享存储（`REDIS_URL` 已在 compose 中配好）。
+- **AWS 凭证**：compose 把宿主机 `~/.aws` 以**只读**方式挂进容器，并设 `AWS_PROFILE=test`，
+  boto3 直接复用本机的 `test` profile，无需把密钥写进镜像。
+- **数据持久化**：`sessions/`（占位符→PII 明文映射）挂载到宿主机目录保留；
+  Redis 数据存命名卷 `redis-data`；`uploads/` 是临时文件，不持久化。
+
+**扩多 worker**：因为任务状态已走 Redis，可安全提高并发——在 compose 的 `app` 服务下取消注释：
+
+```yaml
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+```
+
+> 首次 `--build` 会下载 torch 和 BERT 模型，镜像较大、耗时较久属正常。
+
+## AWS 配置（本地直接运行时）
 
 使用 `test` AWS profile，需要有 Bedrock 和 Comprehend 访问权限：
 
@@ -168,6 +191,8 @@ GET  /docx/review/{job_id}   轮询：
 ├── job_manager.py         # 异步任务管理（内存 / Redis 双后端，按 REDIS_URL 自动选择）
 ├── dict_engine.py         # 词典匹配引擎（热更新）
 ├── sensitive_dict.txt     # 敏感词典（可在线编辑）
+├── Dockerfile             # 应用镜像（spaCy 模型已内置）
+├── docker-compose.yml     # app + Redis 一键部署
 ├── templates/
 │   └── index.html         # 前端页面（6个Tab）
 ├── sessions/              # 脱敏 Session 映射存储

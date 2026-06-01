@@ -1,0 +1,40 @@
+# Build context exclusions — keep the image small and avoid leaking local data.
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment (deps are reinstalled inside the image)
+.venv/
+venv/
+env/
+
+# Runtime data (mounted as volumes / regenerated at runtime)
+sessions/
+uploads/
+
+# Secrets — never bake these into the image
+.env
+.env.*
+*.pem
+*.key
+.aws/
+
+# VCS / IDE / OS
+.git/
+.gitignore
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs & docs not needed at runtime
+*.log
+uvicorn.log

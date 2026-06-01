@@ -1,0 +1,43 @@
+services:
+  app:
+    build: .
+    image: pii-mask-unmask:latest
+    ports:
+      - "8000:8000"
+    environment:
+      # Async job state is shared via Redis so the service can scale to
+      # multiple workers without poll requests 404-ing on the wrong worker.
+      REDIS_URL: redis://redis:6379/0
+      # AWS profile used by boto3 (Bedrock / Comprehend).
+      AWS_PROFILE: test
+      # Offline spaCy model path is not needed — models are baked into the image.
+      # To raise worker count, also bump the uvicorn --workers in command below.
+      JOB_TTL_SECONDS: "1800"
+      JOB_MAX_WORKERS: "2"
+    volumes:
+      # AWS credentials (read-only). boto3 reads profile "test" from here.
+      - ${HOME}/.aws:/root/.aws:ro
+      # Persist the placeholder→PII session mappings across restarts.
+      - ./sessions:/app/sessions
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # Single worker by default. With Redis wired above you can safely scale:
+    #   command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+
+  redis:
+    image: redis:7-alpine
+    # AOF persistence so in-flight job state survives a redis restart.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redis-data:
