@@ -231,18 +231,17 @@
 
 <!-- Tab navigation -->
 <div class="tabs">
-  <button class="tab-btn active" onclick="switchTab('chat', this)">💬 文本对话</button>
+  <button class="tab-btn active" onclick="switchTab('docx-review', this)">🤖 一条龙审阅</button>
+  <button class="tab-btn" onclick="switchTab('chat', this)">💬 文本对话</button>
   <button class="tab-btn" onclick="switchTab('docx-anon', this)">📄 Word 脱敏</button>
   <button class="tab-btn" onclick="switchTab('docx-restore', this)">🔓 Word 还原</button>
-  <button class="tab-btn" onclick="switchTab('docx-review', this)">🤖 一条龙审阅</button>
-  <button class="tab-btn" onclick="switchTab('comprehend', this)">🔬 Comprehend 分析</button>
   <button class="tab-btn" onclick="switchTab('dict', this)">📋 敏感词典</button>
 </div>
 
 <!-- ================================================================ -->
-<!-- TAB 1: Text chat                                                  -->
+<!-- TAB: Text chat                                                    -->
 <!-- ================================================================ -->
-<div class="tab-panel active" id="tab-chat">
+<div class="tab-panel" id="tab-chat">
 
   <div class="card">
     <h2>💬 输入消息</h2>
@@ -368,7 +367,7 @@
 <!-- ================================================================ -->
 <!-- TAB: One-stop review (anonymize → LLM → comment → restore)        -->
 <!-- ================================================================ -->
-<div class="tab-panel" id="tab-docx-review">
+<div class="tab-panel active" id="tab-docx-review">
 
   <div class="card">
     <h2>🤖 一条龙合同审阅</h2>
@@ -396,6 +395,7 @@
     <p style="color:#9ca3af;font-size:0.8rem;margin-top:8px;">
       ⏳ 审阅需调用大模型，通常需要 10-40 秒，请耐心等待。
     </p>
+    <div id="reviewProgress" style="display:none;margin-top:12px;padding:12px 14px;background:#eef2ff;border:1px solid #a5b4fc;border-radius:8px;color:#4338ca;font-size:0.9rem;"></div>
     <div class="error-box" id="reviewError"></div>
     <div class="success-box" id="reviewSuccess"></div>
   </div>
@@ -427,50 +427,8 @@
 </div><!-- /tab-docx-review -->
 
 <!-- ================================================================ -->
-<!-- TAB 4: Comprehend analysis                                        -->
 <!-- ================================================================ -->
-<div class="tab-panel" id="tab-comprehend">
-
-  <div class="card">
-    <h2>🔬 AWS Comprehend 文本分析</h2>
-    <p style="color:#6b7280;font-size:0.88rem;margin-bottom:14px;">
-      使用 Amazon Comprehend 识别文本中的实体（Entity）、关键短语（Key Phrases）。
-      中文支持实体识别；英文额外支持 PII 检测。
-    </p>
-    <textarea id="comprehendInput" placeholder="粘贴合同文本或任意文本…" style="min-height:140px;"></textarea>
-    <div class="controls">
-      <select id="comprehendLang">
-        <option value="zh">中文</option>
-        <option value="en">English</option>
-      </select>
-      <button class="btn btn-primary" id="comprehendBtn" onclick="runComprehend()">开始分析</button>
-      <div class="spinner" id="comprehendSpinner"></div>
-    </div>
-    <div class="error-box" id="comprehendError"></div>
-  </div>
-
-  <!-- Entities -->
-  <div class="card result-section" id="comprehendEntitiesCard">
-    <h2>🏷️ 实体识别（DetectEntities）</h2>
-    <div id="comprehendEntitiesContent"></div>
-  </div>
-
-  <!-- PII (English only) -->
-  <div class="card result-section" id="comprehendPiiCard">
-    <h2>🔒 PII 检测（DetectPiiEntities · 仅英文）</h2>
-    <div id="comprehendPiiContent"></div>
-  </div>
-
-  <!-- Key phrases -->
-  <div class="card result-section" id="comprehendKpCard">
-    <h2>🔑 关键短语（DetectKeyPhrases）</h2>
-    <div id="comprehendKpContent"></div>
-  </div>
-
-</div><!-- /tab-comprehend -->
-
-<!-- ================================================================ -->
-<!-- TAB 5: Sensitive dictionary management                            -->
+<!-- TAB: Sensitive dictionary management                              -->
 <!-- ================================================================ -->
 <div class="tab-panel" id="tab-dict">
 
@@ -725,86 +683,137 @@
     const errBox  = document.getElementById("reviewError");
     const okBox   = document.getElementById("reviewSuccess");
     const resCard = document.getElementById("reviewResultCard");
+    const progBox = document.getElementById("reviewProgress");
 
     errBox.style.display = "none";
     okBox.style.display  = "none";
     resCard.style.display = "none";
     btn.disabled = true;
     spinner.style.display = "block";
+    progBox.style.display = "block";
+    progBox.textContent = "⏳ 已提交，正在脱敏并请求大模型审阅…";
 
     try {
+      // Step 1: submit the job (returns immediately with a job_id)
       const form = new FormData();
       form.append("file", fileInput.files[0]);
       form.append("language", document.getElementById("reviewLang").value);
       form.append("model_key", document.getElementById("reviewModel").value);
 
-      const resp = await fetch("/docx/review", { method: "POST", body: form });
-      if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail || `HTTP ${resp.status}`); }
-
-      const data = await resp.json();
-
-      // Decode base64 → Blob for download (reviewed + anonymized proof copy)
-      _reviewBlob     = b64ToDocxBlob(data.file_b64);
-      _reviewFilename = data.filename;
-      _reviewAnonBlob     = data.anonymized_b64 ? b64ToDocxBlob(data.anonymized_b64) : null;
-      _reviewAnonFilename = data.anonymized_filename || "anonymized.docx";
-
-      document.getElementById("reviewSessionId").textContent = data.session_id;
-
-      // Comments
-      const cmtEl = document.getElementById("reviewCommentsContent");
-      if (!data.comments || data.comments.length === 0) {
-        cmtEl.innerHTML = '<p class="no-pii">大模型未给出批注建议（或未能定位到原文片段）。</p>';
-      } else {
-        cmtEl.innerHTML = data.comments.map((c, i) => `
-          <div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:10px;">
-            <div style="font-size:0.82rem;color:#6b7280;margin-bottom:4px;">批注 ${i + 1} · 定位文本</div>
-            <div style="background:#fef9c3;border-radius:4px;padding:4px 8px;font-size:0.88rem;margin-bottom:8px;">${escHtml(c.quote)}</div>
-            <div style="font-size:0.82rem;color:#6b7280;margin-bottom:4px;">建议</div>
-            <div style="font-size:0.92rem;line-height:1.6;">${escHtml(c.comment)}</div>
-          </div>`).join("");
+      const submitResp = await fetch("/docx/review", { method: "POST", body: form });
+      if (!submitResp.ok) {
+        const e = await submitResp.json();
+        throw new Error(e.detail || `HTTP ${submitResp.status}`);
       }
+      const { job_id } = await submitResp.json();
 
-      // Unmatched (couldn't be anchored)
-      if (data.comments_unmatched && data.comments_unmatched.length > 0) {
-        cmtEl.innerHTML += `
-          <div style="margin-top:8px;font-size:0.82rem;color:#b45309;">
-            ⚠ 另有 ${data.comments_unmatched.length} 条建议未能在文档中定位锚点，未写入批注：
-            <ul style="margin:6px 0 0 18px;">
-              ${data.comments_unmatched.map(c => `<li>${escHtml(c.comment)}</li>`).join("")}
-            </ul>
-          </div>`;
-      }
+      // Step 2: poll until done/error. Each poll is a fast request, so no
+      // proxy/CDN origin timeout is ever hit no matter how long review takes.
+      const data = await pollReviewJob(job_id, progBox);
 
-      // PII table
-      const piiContent = document.getElementById("reviewPiiContent");
-      if (!data.pii_detected || data.pii_detected.length === 0) {
-        piiContent.innerHTML = '<p class="no-pii">未检测到敏感信息</p>';
-      } else {
-        const rows = data.pii_detected.map(item => `
-          <tr>
-            <td><span class="badge">${escHtml(item.placeholder)}</span></td>
-            <td>${escHtml(item.original)}</td>
-          </tr>`).join("");
-        piiContent.innerHTML = `
-          <table class="pii-table">
-            <thead><tr><th>占位符</th><th>原始值</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>`;
-      }
-
-      document.getElementById("reviewAnonDownloadBtn").style.display = _reviewAnonBlob ? "" : "none";
-
-      resCard.style.display = "block";
-      okBox.textContent = `✅ 审阅完成：脱敏 ${data.pii_detected.length} 处，写入 ${data.comments_applied}/${data.comments_total} 条批注。`;
-      okBox.style.display = "block";
+      // Step 3: render
+      renderReviewResult(data);
     } catch (e) {
       errBox.textContent = "❌ 错误：" + e.message;
       errBox.style.display = "block";
     } finally {
       btn.disabled = false;
       spinner.style.display = "none";
+      progBox.style.display = "none";
     }
+  }
+
+  // Poll the job status endpoint until the job finishes. Resolves with the
+  // result payload, or throws on error / job expiry.
+  async function pollReviewJob(jobId, progBox) {
+    const POLL_MS = 3000;
+    while (true) {
+      await new Promise(r => setTimeout(r, POLL_MS));
+      let resp;
+      try {
+        resp = await fetch(`/docx/review/${jobId}`);
+      } catch (netErr) {
+        // transient network blip — keep polling
+        continue;
+      }
+
+      let payload;
+      try { payload = await resp.json(); }
+      catch { throw new Error(`轮询失败：HTTP ${resp.status}`); }
+
+      if (resp.status === 404) throw new Error(payload.detail || "任务不存在或已过期");
+      if (payload.status === "error") throw new Error(payload.detail || "审阅任务失败");
+
+      if (payload.status === "processing") {
+        progBox.textContent = `⏳ 审阅中…（已等待 ${payload.elapsed ?? "?"}s，大模型处理较慢请耐心等待）`;
+        continue;
+      }
+      if (payload.status === "done") {
+        return payload.result;
+      }
+      // unknown status — keep polling defensively
+    }
+  }
+
+  function renderReviewResult(data) {
+    const okBox   = document.getElementById("reviewSuccess");
+    const resCard = document.getElementById("reviewResultCard");
+
+    // Decode base64 → Blob for download (reviewed + anonymized proof copy)
+    _reviewBlob     = b64ToDocxBlob(data.file_b64);
+    _reviewFilename = data.filename;
+    _reviewAnonBlob     = data.anonymized_b64 ? b64ToDocxBlob(data.anonymized_b64) : null;
+    _reviewAnonFilename = data.anonymized_filename || "anonymized.docx";
+
+    document.getElementById("reviewSessionId").textContent = data.session_id;
+
+    // Comments
+    const cmtEl = document.getElementById("reviewCommentsContent");
+    if (!data.comments || data.comments.length === 0) {
+      cmtEl.innerHTML = '<p class="no-pii">大模型未给出批注建议（或未能定位到原文片段）。</p>';
+    } else {
+      cmtEl.innerHTML = data.comments.map((c, i) => `
+        <div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:10px;">
+          <div style="font-size:0.82rem;color:#6b7280;margin-bottom:4px;">批注 ${i + 1} · 定位文本</div>
+          <div style="background:#fef9c3;border-radius:4px;padding:4px 8px;font-size:0.88rem;margin-bottom:8px;">${escHtml(c.quote)}</div>
+          <div style="font-size:0.82rem;color:#6b7280;margin-bottom:4px;">建议</div>
+          <div style="font-size:0.92rem;line-height:1.6;">${escHtml(c.comment)}</div>
+        </div>`).join("");
+    }
+
+    // Unmatched (couldn't be anchored)
+    if (data.comments_unmatched && data.comments_unmatched.length > 0) {
+      cmtEl.innerHTML += `
+        <div style="margin-top:8px;font-size:0.82rem;color:#b45309;">
+          ⚠ 另有 ${data.comments_unmatched.length} 条建议未能在文档中定位锚点，未写入批注：
+          <ul style="margin:6px 0 0 18px;">
+            ${data.comments_unmatched.map(c => `<li>${escHtml(c.comment)}</li>`).join("")}
+          </ul>
+        </div>`;
+    }
+
+    // PII table
+    const piiContent = document.getElementById("reviewPiiContent");
+    if (!data.pii_detected || data.pii_detected.length === 0) {
+      piiContent.innerHTML = '<p class="no-pii">未检测到敏感信息</p>';
+    } else {
+      const rows = data.pii_detected.map(item => `
+        <tr>
+          <td><span class="badge">${escHtml(item.placeholder)}</span></td>
+          <td>${escHtml(item.original)}</td>
+        </tr>`).join("");
+      piiContent.innerHTML = `
+        <table class="pii-table">
+          <thead><tr><th>占位符</th><th>原始值</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    document.getElementById("reviewAnonDownloadBtn").style.display = _reviewAnonBlob ? "" : "none";
+
+    resCard.style.display = "block";
+    okBox.textContent = `✅ 审阅完成：脱敏 ${data.pii_detected.length} 处，写入 ${data.comments_applied}/${data.comments_total} 条批注。`;
+    okBox.style.display = "block";
   }
 
   function downloadReviewed() {
@@ -849,149 +858,6 @@
     el.addEventListener("dragleave", () => el.classList.remove("dragover"));
     el.addEventListener("drop",      e => { e.preventDefault(); el.classList.remove("dragover"); });
   });
-
-  // ----------------------------------------------------------------
-  // Comprehend analysis
-  // ----------------------------------------------------------------
-
-  // Color map for entity types
-  const ENTITY_COLORS = {
-    PERSON:          "#dbeafe",  // blue
-    ORGANIZATION:    "#fef9c3",  // yellow
-    LOCATION:        "#dcfce7",  // green
-    DATE:            "#f3e8ff",  // purple
-    QUANTITY:        "#ffedd5",  // orange
-    COMMERCIAL_ITEM: "#fce7f3",  // pink
-    EVENT:           "#e0f2fe",  // sky
-    TITLE:           "#f0fdf4",  // light green
-    OTHER:           "#f1f5f9",  // gray
-    // PII types
-    NAME:                 "#dbeafe",
-    PHONE:                "#dcfce7",
-    EMAIL:                "#fef9c3",
-    ADDRESS:              "#ffedd5",
-    CREDIT_DEBIT_NUMBER:  "#fce7f3",
-    BANK_ACCOUNT_NUMBER:  "#fce7f3",
-    SSN:                  "#fee2e2",
-  };
-
-  function entityColor(type) {
-    return ENTITY_COLORS[type] || "#f1f5f9";
-  }
-
-  async function runComprehend() {
-    const text = document.getElementById("comprehendInput").value.trim();
-    if (!text) return;
-
-    const language = document.getElementById("comprehendLang").value;
-    const btn      = document.getElementById("comprehendBtn");
-    const spinner  = document.getElementById("comprehendSpinner");
-    const errBox   = document.getElementById("comprehendError");
-
-    errBox.style.display = "none";
-    document.querySelectorAll("#tab-comprehend .result-section").forEach(el => el.style.display = "none");
-    btn.disabled = true;
-    spinner.style.display = "block";
-
-    try {
-      const resp = await fetch("/comprehend/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, language }),
-      });
-      if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail || `HTTP ${resp.status}`); }
-      renderComprehend(await resp.json(), text);
-    } catch (e) {
-      errBox.textContent = "❌ 错误：" + e.message;
-      errBox.style.display = "block";
-    } finally {
-      btn.disabled = false;
-      spinner.style.display = "none";
-    }
-  }
-
-  function renderComprehend(data, originalText) {
-    // ---- Entities ----
-    const entCard = document.getElementById("comprehendEntitiesCard");
-    const entContent = document.getElementById("comprehendEntitiesContent");
-    if (data.entities.length === 0) {
-      entContent.innerHTML = '<p class="no-pii">未检测到实体</p>';
-    } else {
-      // Highlighted text view
-      const highlighted = highlightSpans(originalText, data.entities, "type");
-      // Table
-      const rows = data.entities.map(e => `
-        <tr>
-          <td><span style="background:${entityColor(e.type)};padding:2px 8px;border-radius:4px;font-size:0.85rem;">${escHtml(e.type_label)}</span></td>
-          <td style="font-weight:600;">${escHtml(e.text)}</td>
-          <td style="color:#6b7280;font-size:0.85rem;">${(e.score * 100).toFixed(1)}%</td>
-        </tr>`).join("");
-      entContent.innerHTML = `
-        <div style="margin-bottom:16px;">
-          <div class="label" style="margin-bottom:8px;">高亮预览</div>
-          <div class="text-box" style="line-height:2;">${highlighted}</div>
-        </div>
-        <table class="pii-table">
-          <thead><tr><th>类型</th><th>文本</th><th>置信度</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>`;
-    }
-    entCard.style.display = "block";
-
-    // ---- PII (English only) ----
-    const piiCard = document.getElementById("comprehendPiiCard");
-    const piiContent = document.getElementById("comprehendPiiContent");
-    if (!data.pii_supported) {
-      piiContent.innerHTML = '<p class="no-pii">PII 检测仅支持英文，当前语言为中文。</p>';
-    } else if (data.pii_entities.length === 0) {
-      piiContent.innerHTML = '<p class="no-pii">未检测到 PII</p>';
-    } else {
-      const rows = data.pii_entities.map(p => `
-        <tr>
-          <td><span style="background:${entityColor(p.type)};padding:2px 8px;border-radius:4px;font-size:0.85rem;">${escHtml(p.type_label)}</span></td>
-          <td style="font-weight:600;">${escHtml(p.text)}</td>
-          <td style="color:#6b7280;font-size:0.85rem;">${(p.score * 100).toFixed(1)}%</td>
-        </tr>`).join("");
-      piiContent.innerHTML = `
-        <table class="pii-table">
-          <thead><tr><th>类型</th><th>文本</th><th>置信度</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>`;
-    }
-    piiCard.style.display = "block";
-
-    // ---- Key phrases ----
-    const kpCard = document.getElementById("comprehendKpCard");
-    const kpContent = document.getElementById("comprehendKpContent");
-    if (data.key_phrases.length === 0) {
-      kpContent.innerHTML = '<p class="no-pii">未检测到关键短语</p>';
-    } else {
-      const chips = data.key_phrases
-        .sort((a, b) => b.score - a.score)
-        .map(kp => `<span style="display:inline-block;background:#e0f2fe;border-radius:20px;padding:4px 12px;margin:4px;font-size:0.88rem;">${escHtml(kp.text)}<span style="color:#6b7280;font-size:0.78rem;margin-left:4px;">${(kp.score*100).toFixed(0)}%</span></span>`)
-        .join("");
-      kpContent.innerHTML = `<div style="line-height:2.2;">${chips}</div>`;
-    }
-    kpCard.style.display = "block";
-  }
-
-  function highlightSpans(text, spans, typeKey) {
-    if (!spans.length) return escHtml(text);
-    // Sort by begin offset
-    const sorted = [...spans].sort((a, b) => a.begin - b.begin);
-    let result = "";
-    let cursor = 0;
-    for (const span of sorted) {
-      if (span.begin < cursor) continue;
-      result += escHtml(text.slice(cursor, span.begin));
-      const color = entityColor(span[typeKey]);
-      const label = span.type_label || span[typeKey];
-      result += `<mark style="background:${color};border-radius:3px;padding:1px 3px;" title="${escHtml(label)}">${escHtml(span.text)}<sup style="font-size:0.65rem;color:#555;margin-left:2px;">${escHtml(label)}</sup></mark>`;
-      cursor = span.end;
-    }
-    result += escHtml(text.slice(cursor));
-    return result;
-  }
 
   // ----------------------------------------------------------------
   // Sensitive dictionary management

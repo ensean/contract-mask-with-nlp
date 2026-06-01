@@ -11,6 +11,7 @@ Session mapping is persisted as JSON under the sessions/ directory so
 that a user can upload the anonymized docx later and restore it.
 """
 
+import base64
 import copy
 import json
 import logging
@@ -642,4 +643,54 @@ def review_and_comment_docx(
             {"quote": rc.quote, "comment": rc.comment}
             for rc in unmatched
         ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Background-job wrapper for the one-stop review
+# ---------------------------------------------------------------------------
+
+def run_review_job(
+    input_path: str | Path,
+    output_path: str | Path,
+    anon_path: str | Path,
+    model_key: str,
+    language: str,
+    original_stem: str,
+) -> dict:
+    """
+    Self-contained worker for the async /docx/review job. Runs the full
+    pipeline, reads the produced documents into base64, cleans up all temp
+    files, and returns the complete response payload the client will download.
+
+    Designed to run inside a background thread: it owns its temp files and
+    always cleans them up, regardless of success or failure.
+    """
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+    anon_path = Path(anon_path)
+    try:
+        result = review_and_comment_docx(
+            input_path, output_path,
+            model_key=model_key, language=language,
+            anonymized_output_path=anon_path,
+        )
+        file_b64 = base64.b64encode(output_path.read_bytes()).decode()
+        anon_b64 = base64.b64encode(anon_path.read_bytes()).decode()
+    finally:
+        input_path.unlink(missing_ok=True)
+        output_path.unlink(missing_ok=True)
+        anon_path.unlink(missing_ok=True)
+
+    return {
+        "session_id":          result["session_id"],
+        "filename":            f"{original_stem}_reviewed.docx",
+        "file_b64":            file_b64,
+        "anonymized_filename": f"{original_stem}_anonymized.docx",
+        "anonymized_b64":      anon_b64,
+        "pii_detected":        result["pii_detected"],
+        "comments":            result["comments"],
+        "comments_total":      result["comments_total"],
+        "comments_applied":    result["comments_applied"],
+        "comments_unmatched":  result["comments_unmatched"],
     }
