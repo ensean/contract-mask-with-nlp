@@ -128,8 +128,23 @@ GET  /docx/review/{job_id}   轮询：
 ```
 
 - 前端提交后每 3s 轮询一次，显示「审阅中…（已等待 Ns）」，完成后再渲染结果与下载。
-- 任务状态存于进程内存（`JobManager`），适用于单 worker 部署；完成的任务保留 30 分钟（TTL）后回收。
-- 多 worker / 多实例部署需把内存任务表替换为 Redis 或数据库。
+- 任务状态默认存于进程内存（`MemoryJobStore`），适用于**单 worker** 部署；完成的任务保留 30 分钟（TTL）后回收。
+- **多 worker / 多实例部署**：设置环境变量 `REDIS_URL`（如 `redis://host:6379/0`），任务状态改存 Redis（`RedisJobStore`），任何 worker 都能响应轮询，避免轮询被路由到别的 worker 而 404。未设置或 Redis 不可达时自动回退到内存存储。
+
+  ```bash
+  export REDIS_URL=redis://localhost:6379/0   # 可选，多 worker 时需要
+  export JOB_TTL_SECONDS=1800                 # 任务保留时长（默认 1800）
+  export JOB_MAX_WORKERS=2                    # 后台线程池大小（默认 2）
+  ```
+
+### 性能与并发说明
+
+- **spaCy 模型缓存**：`zh_core_web_trf`（~400MB BERT）按模型名缓存为进程级单例，仅首次加载；
+  之前每段落每文档都 `spacy.load()` 重载，是审阅慢和并发内存膨胀的主因。修复后单次脱敏从数秒降到毫秒级。
+- **NER 线程安全**：spaCy 的 `nlp()` 对同一管线并发调用不保证线程安全，故按模型加锁串行化推理；
+  审阅在线程池运行，多文档并发时 NER 步骤会串行，但各自结果完全隔离，不会串档。
+- **会话隔离**：每个请求的临时文件、`job_id`、`session_id` 均为独立 UUID；一条龙流程内部每次新建独立
+  `PIIEngine` 实例，占位符计数器互不干扰。多人同时提交不会发生 PII 串档。
 
 ## 文件存储与生命周期
 
@@ -150,7 +165,7 @@ GET  /docx/review/{job_id}   轮询：
 ├── bedrock_client.py      # AWS Bedrock 调用封装
 ├── comprehend_client.py   # AWS Comprehend 调用封装
 ├── word_processor.py      # Word 文档脱敏/还原 + 一条龙审阅批注
-├── job_manager.py         # 异步任务管理（一条龙审阅后台执行 + 轮询）
+├── job_manager.py         # 异步任务管理（内存 / Redis 双后端，按 REDIS_URL 自动选择）
 ├── dict_engine.py         # 词典匹配引擎（热更新）
 ├── sensitive_dict.txt     # 敏感词典（可在线编辑）
 ├── templates/
