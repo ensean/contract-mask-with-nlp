@@ -25,7 +25,10 @@ from pydantic import BaseModel, Field
 
 from pii_engine import PIIEngine
 from bedrock_client import invoke_model, MODELS, DEFAULT_MODEL_KEY
-from word_processor import anonymize_docx, restore_docx, list_sessions, load_session
+from word_processor import (
+    anonymize_docx, restore_docx, list_sessions, load_session,
+    review_and_comment_docx,
+)
 from comprehend_client import analyze_text
 from dict_engine import get_dict, DICT_FILE
 
@@ -198,6 +201,61 @@ async def docx_restore(
 async def docx_sessions():
     """List all stored anonymization sessions."""
     return list_sessions()
+
+
+@app.post("/docx/review")
+async def docx_review(
+    file: UploadFile = File(...),
+    language: str = Form(default="zh"),
+    model_key: str = Form(default=DEFAULT_MODEL_KEY),
+):
+    """
+    One-stop pipeline: upload a .docx, anonymize it, send to the LLM for
+    contract review, restore the PII, and return the restored document with
+    the review suggestions attached as Word comments (批注) — plus a
+    base64-encoded file for download.
+    """
+    if not file.filename or not file.filename.lower().endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Only .docx files are supported.")
+    if model_key not in MODELS:
+        raise HTTPException(status_code=400, detail=f"Unknown model key '{model_key}'.")
+
+    uid = uuid.uuid4().hex
+    input_path  = UPLOAD_DIR / f"{uid}_input.docx"
+    output_path = UPLOAD_DIR / f"{uid}_reviewed.docx"
+    anon_path   = UPLOAD_DIR / f"{uid}_anonymized.docx"
+
+    try:
+        input_path.write_bytes(await file.read())
+        result = review_and_comment_docx(
+            input_path, output_path,
+            model_key=model_key, language=language,
+            anonymized_output_path=anon_path,
+        )
+        file_b64 = base64.b64encode(output_path.read_bytes()).decode()
+        anon_b64 = base64.b64encode(anon_path.read_bytes()).decode()
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        input_path.unlink(missing_ok=True)
+        output_path.unlink(missing_ok=True)
+        anon_path.unlink(missing_ok=True)
+
+    stem = Path(file.filename).stem
+    return {
+        "session_id":   result["session_id"],
+        "filename":     f"{stem}_reviewed.docx",
+        "file_b64":     file_b64,
+        "anonymized_filename": f"{stem}_anonymized.docx",
+        "anonymized_b64":      anon_b64,
+        "pii_detected": result["pii_detected"],
+        "comments":     result["comments"],
+        "comments_total":     result["comments_total"],
+        "comments_applied":   result["comments_applied"],
+        "comments_unmatched": result["comments_unmatched"],
+    }
 
 
 # ---------------------------------------------------------------------------

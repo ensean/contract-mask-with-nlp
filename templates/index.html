@@ -234,6 +234,7 @@
   <button class="tab-btn active" onclick="switchTab('chat', this)">💬 文本对话</button>
   <button class="tab-btn" onclick="switchTab('docx-anon', this)">📄 Word 脱敏</button>
   <button class="tab-btn" onclick="switchTab('docx-restore', this)">🔓 Word 还原</button>
+  <button class="tab-btn" onclick="switchTab('docx-review', this)">🤖 一条龙审阅</button>
   <button class="tab-btn" onclick="switchTab('comprehend', this)">🔬 Comprehend 分析</button>
   <button class="tab-btn" onclick="switchTab('dict', this)">📋 敏感词典</button>
 </div>
@@ -363,6 +364,67 @@
   </div>
 
 </div><!-- /tab-docx-restore -->
+
+<!-- ================================================================ -->
+<!-- TAB: One-stop review (anonymize → LLM → comment → restore)        -->
+<!-- ================================================================ -->
+<div class="tab-panel" id="tab-docx-review">
+
+  <div class="card">
+    <h2>🤖 一条龙合同审阅</h2>
+    <p style="color:#6b7280;font-size:0.88rem;margin-bottom:14px;">
+      上传 Word 合同 → 自动脱敏 → 发送大模型审阅 → 以 <strong>Word 批注</strong>形式给出修改建议
+      → 还原敏感信息后供下载。全程 PII 不出本地脱敏边界。
+    </p>
+
+    <div class="upload-area" id="reviewUploadArea">
+      <input type="file" id="reviewFile" accept=".docx" onchange="onReviewFileChange(this)" />
+      <div class="upload-icon">📂</div>
+      <p>点击或拖拽 .docx 合同文件到此处</p>
+      <div class="file-name" id="reviewFileName"></div>
+    </div>
+
+    <div class="controls" style="margin-top:16px;">
+      <select id="reviewLang">
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+      </select>
+      <select id="reviewModel"><option value="">加载模型列表…</option></select>
+      <button class="btn btn-primary" id="reviewBtn" onclick="reviewDocx()">开始审阅</button>
+      <div class="spinner" id="reviewSpinner"></div>
+    </div>
+    <p style="color:#9ca3af;font-size:0.8rem;margin-top:8px;">
+      ⏳ 审阅需调用大模型，通常需要 10-40 秒，请耐心等待。
+    </p>
+    <div class="error-box" id="reviewError"></div>
+    <div class="success-box" id="reviewSuccess"></div>
+  </div>
+
+  <div class="card result-section" id="reviewResultCard">
+    <h2>✅ 审阅完成</h2>
+    <div style="margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;">
+      <button class="btn btn-success" id="reviewDownloadBtn" onclick="downloadReviewed()">⬇ 下载带批注的还原文档</button>
+      <button class="btn" style="background:#6b7280;" id="reviewAnonDownloadBtn" onclick="downloadReviewAnon()">⬇ 下载脱敏版（发送给大模型的内容）</button>
+    </div>
+    <p style="color:#9ca3af;font-size:0.8rem;margin:-8px 0 4px;">
+      脱敏版即实际离开本地、发送给大模型的内容，可用于核对原始 PII 从未外发。
+    </p>
+
+    <div class="label">Session ID（如需后续还原其他副本可保存）</div>
+    <div class="session-id-box" id="reviewSessionId">—</div>
+
+    <div style="margin-top:20px;">
+      <div class="label" style="margin-bottom:8px;">💬 大模型审阅建议</div>
+      <div id="reviewCommentsContent"><p class="no-pii">—</p></div>
+    </div>
+
+    <div style="margin-top:20px;" id="reviewPiiSection">
+      <div class="label" style="margin-bottom:8px;">🔍 检测并脱敏的敏感信息</div>
+      <div id="reviewPiiContent"></div>
+    </div>
+  </div>
+
+</div><!-- /tab-docx-review -->
 
 <!-- ================================================================ -->
 <!-- TAB 4: Comprehend analysis                                        -->
@@ -645,6 +707,131 @@
   }
 
   // ----------------------------------------------------------------
+  // One-stop review (anonymize → LLM → comment → restore)
+  // ----------------------------------------------------------------
+  let _reviewBlob = null, _reviewFilename = "";
+  let _reviewAnonBlob = null, _reviewAnonFilename = "";
+
+  function onReviewFileChange(input) {
+    document.getElementById("reviewFileName").textContent = input.files[0]?.name || "";
+  }
+
+  async function reviewDocx() {
+    const fileInput = document.getElementById("reviewFile");
+    if (!fileInput.files[0]) { alert("请先选择文件"); return; }
+
+    const btn     = document.getElementById("reviewBtn");
+    const spinner = document.getElementById("reviewSpinner");
+    const errBox  = document.getElementById("reviewError");
+    const okBox   = document.getElementById("reviewSuccess");
+    const resCard = document.getElementById("reviewResultCard");
+
+    errBox.style.display = "none";
+    okBox.style.display  = "none";
+    resCard.style.display = "none";
+    btn.disabled = true;
+    spinner.style.display = "block";
+
+    try {
+      const form = new FormData();
+      form.append("file", fileInput.files[0]);
+      form.append("language", document.getElementById("reviewLang").value);
+      form.append("model_key", document.getElementById("reviewModel").value);
+
+      const resp = await fetch("/docx/review", { method: "POST", body: form });
+      if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail || `HTTP ${resp.status}`); }
+
+      const data = await resp.json();
+
+      // Decode base64 → Blob for download (reviewed + anonymized proof copy)
+      _reviewBlob     = b64ToDocxBlob(data.file_b64);
+      _reviewFilename = data.filename;
+      _reviewAnonBlob     = data.anonymized_b64 ? b64ToDocxBlob(data.anonymized_b64) : null;
+      _reviewAnonFilename = data.anonymized_filename || "anonymized.docx";
+
+      document.getElementById("reviewSessionId").textContent = data.session_id;
+
+      // Comments
+      const cmtEl = document.getElementById("reviewCommentsContent");
+      if (!data.comments || data.comments.length === 0) {
+        cmtEl.innerHTML = '<p class="no-pii">大模型未给出批注建议（或未能定位到原文片段）。</p>';
+      } else {
+        cmtEl.innerHTML = data.comments.map((c, i) => `
+          <div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:10px;">
+            <div style="font-size:0.82rem;color:#6b7280;margin-bottom:4px;">批注 ${i + 1} · 定位文本</div>
+            <div style="background:#fef9c3;border-radius:4px;padding:4px 8px;font-size:0.88rem;margin-bottom:8px;">${escHtml(c.quote)}</div>
+            <div style="font-size:0.82rem;color:#6b7280;margin-bottom:4px;">建议</div>
+            <div style="font-size:0.92rem;line-height:1.6;">${escHtml(c.comment)}</div>
+          </div>`).join("");
+      }
+
+      // Unmatched (couldn't be anchored)
+      if (data.comments_unmatched && data.comments_unmatched.length > 0) {
+        cmtEl.innerHTML += `
+          <div style="margin-top:8px;font-size:0.82rem;color:#b45309;">
+            ⚠ 另有 ${data.comments_unmatched.length} 条建议未能在文档中定位锚点，未写入批注：
+            <ul style="margin:6px 0 0 18px;">
+              ${data.comments_unmatched.map(c => `<li>${escHtml(c.comment)}</li>`).join("")}
+            </ul>
+          </div>`;
+      }
+
+      // PII table
+      const piiContent = document.getElementById("reviewPiiContent");
+      if (!data.pii_detected || data.pii_detected.length === 0) {
+        piiContent.innerHTML = '<p class="no-pii">未检测到敏感信息</p>';
+      } else {
+        const rows = data.pii_detected.map(item => `
+          <tr>
+            <td><span class="badge">${escHtml(item.placeholder)}</span></td>
+            <td>${escHtml(item.original)}</td>
+          </tr>`).join("");
+        piiContent.innerHTML = `
+          <table class="pii-table">
+            <thead><tr><th>占位符</th><th>原始值</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      }
+
+      document.getElementById("reviewAnonDownloadBtn").style.display = _reviewAnonBlob ? "" : "none";
+
+      resCard.style.display = "block";
+      okBox.textContent = `✅ 审阅完成：脱敏 ${data.pii_detected.length} 处，写入 ${data.comments_applied}/${data.comments_total} 条批注。`;
+      okBox.style.display = "block";
+    } catch (e) {
+      errBox.textContent = "❌ 错误：" + e.message;
+      errBox.style.display = "block";
+    } finally {
+      btn.disabled = false;
+      spinner.style.display = "none";
+    }
+  }
+
+  function downloadReviewed() {
+    if (!_reviewBlob) return;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(_reviewBlob);
+    a.download = _reviewFilename;
+    a.click();
+  }
+
+  function downloadReviewAnon() {
+    if (!_reviewAnonBlob) return;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(_reviewAnonBlob);
+    a.download = _reviewAnonFilename;
+    a.click();
+  }
+
+  // base64 → .docx Blob
+  function b64ToDocxBlob(b64) {
+    const binary = atob(b64);
+    const bytes  = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+  }
+
+  // ----------------------------------------------------------------
   // Shared utils
   // ----------------------------------------------------------------
   function escHtml(str) {
@@ -656,7 +843,7 @@
   });
 
   // Drag-and-drop highlight
-  ["anonUploadArea","restoreUploadArea"].forEach(id => {
+  ["anonUploadArea","restoreUploadArea","reviewUploadArea"].forEach(id => {
     const el = document.getElementById(id);
     el.addEventListener("dragover",  e => { e.preventDefault(); el.classList.add("dragover"); });
     el.addEventListener("dragleave", () => el.classList.remove("dragover"));
@@ -887,9 +1074,11 @@
   (async () => {
     try {
       const models = await (await fetch("/models")).json();
-      document.getElementById("modelSelect").innerHTML = models.map(m =>
+      const opts = models.map(m =>
         `<option value="${m.key}">${m.display_name}</option>`
       ).join("");
+      document.getElementById("modelSelect").innerHTML = opts;
+      document.getElementById("reviewModel").innerHTML = opts;
     } catch(e) { console.error("Failed to load models", e); }
   })();
 </script>
